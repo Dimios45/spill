@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spill"
+version = "0.1.0"
+description = "Prompt-driven YAM manipulation with Karma, Astra, Dream and Viser"
+requires-python = ">=3.12,<3.14"
+dependencies = ["karma", "openai>=2", "dreamlabs-client", "pydantic>=2", "scipy>=1.14"]
+
+[project.scripts]
+spill = "spill.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.uv.sources]
+karma = { path = "..", editable = true }
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+torchcodec = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

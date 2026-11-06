@@ -1,0 +1,14 @@
+.venv/
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+runs/
+logs/
+data/
+config/local.json
+config/calibration.json
+config/camera_intrinsics.json

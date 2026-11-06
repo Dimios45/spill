@@ -1,0 +1,41 @@
+{
+  "interfaces": {
+    "left": "can0",
+    "right": "can1"
+  },
+  "serials": {
+    "top": "SET_ME_top",
+    "left_wrist": "SET_ME_left_wrist",
+    "right_wrist": "SET_ME_right_wrist"
+  },
+  "calibration": "config/calibration.json",
+  "model": "gpt-6-astra",
+  "dream": {
+    "checkpoint": "dreamlabs/dream-1",
+    "verified": false,
+    "action_hz": 20,
+    "execution_horizon": 30,
+    "timeout_ms": 15000,
+    "ik": null,
+    "sdk_runtime": "client",
+    "pacing": "sync"
+  },
+  "limits": {
+    "state_age_s": 0.25,
+    "camera_skew_s": 0.1,
+    "max_velocity": 0.3,
+    "max_acceleration": 1.5,
+    "gripper_velocity": 1.0,
+    "tracking_error": 0.25,
+    "max_chunk_age_s": 10.0,
+    "temperature_c": 65,
+    "collision_margin": 0.015,
+    "sweep_step_rad": 0.02,
+    "task_timeout_s": 300,
+    "retries_per_subtask": 2,
+    "hold_timeout_s": 60
+  },
+  "port": 8080,
+  "run_dir": "runs",
+  "viewer_hz": 8
+}
