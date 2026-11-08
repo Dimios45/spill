@@ -40,22 +40,50 @@ def test_doctor_zero_shot_flag():
     assert parser().parse_args(["doctor", "--zero-shot"]).zero_shot
 
 
-def test_interactive_task_defaults_record_and_no_grasp_override(monkeypatch):
+def test_default_task_record_and_no_grasp_override():
+    from spill.defaults import DEFAULT_PROMPT
+
     args = parser().parse_args(["run", "--hardware", "--zero-shot"])
-    assert args.prompt is None and args.record and args.grasp == "auto"
-    monkeypatch.setattr("builtins.input", lambda _: "Move only the filled container.")
-    assert task_prompt(args.prompt) == "Move only the filled container."
+    assert args.record and args.grasp == "auto" and args.dream_only
+    assert task_prompt(args.prompt) == DEFAULT_PROMPT
+    assert task_prompt("  Custom task  ") == "Custom task"
 
 
-def test_task_entry_rejects_empty_or_eof(monkeypatch):
+def test_task_entry_rejects_empty():
     from spill.types import SpillError
 
     with pytest.raises(SpillError, match="non-empty"):
         task_prompt("  ")
 
-    def eof(_):
-        raise EOFError
 
-    monkeypatch.setattr("builtins.input", eof)
-    with pytest.raises(SpillError, match="cancelled"):
-        task_prompt(None)
+def test_bare_command_selects_local_hardware_without_starting_it(monkeypatch):
+    from spill import cli
+
+    captured = {}
+
+    def fake_load(path):
+        captured["config"] = path
+        return Settings()
+
+    def fake_run(settings, args):
+        captured["args"] = args
+        return 0
+
+    monkeypatch.setattr(cli, "load_settings", fake_load)
+    monkeypatch.setattr(cli, "run", fake_run)
+    assert cli.main([]) == 0
+    args = captured["args"]
+    assert captured["config"] == "config/local.json"
+    assert args.hardware and args.zero_shot and args.dream_only
+    assert args.record and not args.no_park
+    assert Settings().dream.checkpoint == "dreamlabs/dream-1-beta"
+    assert cli.main(["run", "--astra-only", "--shadow"]) == 0
+    assert not captured["args"].dream_only
+
+
+def test_explicit_modes():
+    assert not parser().parse_args(["run"]).hardware
+    assert parser().parse_args(["run", "--dream"]).dream_only
+    assert not parser().parse_args(["run", "--astra-dream"]).dream_only
+    with pytest.raises(SystemExit):
+        parser().parse_args(["run", "--astra-dream", "--dream-only"])

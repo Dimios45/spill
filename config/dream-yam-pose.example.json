@@ -11,7 +11,7 @@
   "calibration": "config/calibration.json",
   "model": "gpt-6-astra",
   "dream": {
-    "checkpoint": "dreamlabs/dream-1",
+    "checkpoint": "dreamlabs/dream-1-beta",
     "verified": false,
     "action_hz": 20,
     "execution_horizon": 30,

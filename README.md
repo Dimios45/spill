@@ -1,298 +1,264 @@
 # Spill
 
-A prompt-driven tabletop harness for Karma's bimanual YAM, an overhead D435,
-and two wrist D405 cameras. Astra plans and checks progress; Dream predicts
-joint trajectories; Karma retains exclusive motor ownership and native protection.
+Prompt-driven pill transfer with Karma’s bimanual YAM, three RealSense cameras,
+and **Dream1 Beta** (`dreamlabs/dream-1-beta`). Dream predicts joint trajectories;
+Karma owns the motors and retains its native protection. Viser shows the cameras,
+robot state, predictions, and operator controls.
 
-**Experimental: operator-run hardware trials have exercised APIs, arm motion,
-shutdown and recording, but reliable pill transfer has not been established.**
-Recurring motor-feedback gaps remain unresolved. Mock mode is a joint echo with
-synthetic cameras, not a pouring simulation. Measured scene calibration is optional
-only in explicit zero-shot mode, which disables geometric collision checks.
+![Initial tabletop setup: overhead, left wrist, and right wrist views](assets/pill-transfer-initial.jpg)
 
-Start with the [operating and troubleshooting guide](docs/operations.md).
-The [latest diagnosed trial](docs/rollout-2026-11-06.md) distinguishes a planner
-pause from a hardware fault. See [validation](docs/validation.md) for test scope.
+*Initial phase, 00:01 of `exports/20261107T101729-6bbb5b03-three-cameras.mp4`.
+This is a recorded setup image, not evidence of a completed transfer.*
 
-## Episode review and explicit reference context
+## Quick start
 
-Every finished run now gets `episode.md`, `episode.json` and `model_io_index.json`.
-`runs/catalog.md` indexes local runs with their exact task, dataset ID/path,
-outcome, decisions and model I/O references. Full API/SDK inputs and outputs stay
-in `events.jsonl`; the index points to their line numbers without duplicating
-camera payloads. Build or refresh documentation for older runs with
-`uv run spill catalog`. Damaged/incomplete logs and missing datasets are marked;
-source artifacts are never rewritten. These local reports are not uploaded or
-committed automatically.
-
-To use an episode as historical context for a new task:
+Run commands from the `spill/` directory inside your Karma checkout. Python 3.12
+and dependencies are managed by uv; Karma is an editable dependency at `..`.
+The cell needs its configured CAN interfaces and connected RealSense cameras.
 
 ```bash
-uv run spill --config config/local.json run --hardware --zero-shot \
-  --reference-run 20261107T101729-6bbb5b03
-```
-
-Enter the desired task when prompted. Astra receives the prior task, outcome,
-decisions and any `operator_notes.json` alongside **fresh** camera/robot state.
-Dream receives the newly chosen subtask; no old joint sequence is replayed.
-This is explicit contextual adaptation, not fine-tuning or persistent model
-memory. Without `--reference-run`, no prior episode is automatically supplied.
-The source cup deformation in that episode is operator-reported and visually
-flagged by Astra; it is not a measured grip-force diagnosis. New general guidance
-asks for earlier reassessment and supported recovery when deformation obstructs
-the task. It does not implement force control or guarantee a non-crushing grasp.
-
-## Zero-shot on your YAM
-
-Enter your task in the terminal; each rollout records locally using Karma's
-LeRobot v3 writer by default:
-
-```bash
-uv run spill --config config/local.json run --hardware --zero-shot
-# Task for this rollout: <type your task and press Enter>
-```
-
-Astra's context gives general object-handling guidance: consider fragility,
-stability, contents and secure support, and move only objects necessary for the
-task. It does not require grasping both cups or a fixed orientation. The task text
-you enter is preserved. You may also supply it as the positional command argument.
-No hardware is started before task entry is complete. The legacy
-`--grasp top-down` flag remains an explicit opt-in that adds cup-specific language;
-omit it for general tasks. `--no-record` disables v3 dataset capture, but ordinary
-run logs and model I/O remain enabled.
-
-Model audit events include `astra_request` (system context, task, history and
-images), `astra_response` (returned response), `astra` (parsed decision/usage),
-`dream_session` (instruction/configuration), `dream_tick` (images and state sent
-to the SDK), `dream_request` (command anchor), and `dream_raw`/`dream` (returned
-action arrays before/after normalization). Errors and request timing are retained.
-Dream logs cover the SDK interface; they are not a capture of its private HTTP
-transport or internal model state. Credentials are never intentionally logged.
-
-Recording includes observations and current commanded targets during motion and
-API waits; parking is excluded. Images are archived asynchronously, then Karma's
-LeRobot v3 writer packages videos and Parquet **after motor shutdown** in
-`runs/<run-id>/lerobot_v3`. No data is uploaded. Outcome and fault metadata live in
-`spill_rollout.json`; failed and interrupted episodes are not labeled successful.
-Samples are resampled causally to 20 Hz with source timestamps retained; gaps over
-200 ms become separate episodes. The dataset uses Karma's convention **0=open,
-1=closed**, converted from native state/actions. Existing logs can be converted
-with `uv run spill export-v3 runs/<run-id>`; older logs contain command segments
-only, so their metadata explicitly identifies that limitation. Existing datasets
-are never overwritten.
-
-Motor-feedback faults still stop in place. New fault logs include per-motor
-feedback ages and recent telemetry in `observation_fault` events. The bounded
-executor permits at most 0.01 rad of initial boundary error to recover gradually
-toward the normal joint range; it never permits motion further outside that range.
-
-Every completed run writes `runs/<run-id>/summary.json` alongside `events.jsonl`,
-camera observations, raw Dream predictions, bounded accepted trajectories and
-commands. The summary compares model latencies, commanded motion time, token usage,
-retry events and stop reasons. Summarize an older rollout without hardware/API calls:
-
-```bash
-uv run spill report runs/20261106T142341-fd6eaa27
-```
-
-Astra requests have a 45-second timeout and up to two transient-error retries
-with 2/4-second backoff. Each retry captures fresh observations while the robot
-holds; Ctrl+C and the wall-clock task timeout remain active. Authentication errors
-do not retry. Configure `planner_timeout_s`, `planner_retries`, and
-`planner_retry_delay_s` in local settings. No retry guarantees provider availability.
-
-`config/local.json` on this machine contains your `can_left`/`can_right` mappings
-and ASIC camera serials. Spill translates ASIC serials using Karma's resolver.
-Supply both keys in your shell, or put them in a local `.env` (never commit keys).
-
-```bash
-cd /home/yambox/karma/spill
-uv sync --locked --project dream_runtime
-uv run --env-file .env spill --config config/local.json run \
-  "Pour all pills into the empty cup" --hardware --zero-shot
-```
-
-The `.env` contains `OPENAI_API_KEY=...` and `DREAM_API_KEY=...`. If the keys are
-already exported, omit `--env-file .env`. No calibration file, verification flags,
-demonstrations or fine-tuning are required. Astra plans and observes progress;
-Dream-1 predicts actions; Karma controls the arms. Authenticated Dream model
-availability is still checked. API access and task success are not guaranteed.
-
-Zero-shot skips scene geometry checks (table, obstacles, self/inter-arm collision).
-Joint limits, speed/acceleration limits, gripper limits, tracking checks, freshness,
-temperature, native Karma protection and stop controls remain active. Viser at
-`http://192.168.0.184:8080` on this cell shows cameras, subtasks and trajectories.
-The server binds `0.0.0.0`; use `http://<robot-host-ip>:8080` on another cell.
-Base placement is
-nominal and is labeled as uncalibrated. Ctrl+C requests home then shutdown; a
-second interrupt cancels parking. Sustained feedback faults stop in place.
-Brief feedback gaps inhibit new commands and invalidate pending predictions;
-fresh feedback triggers replanning. Ctrl+C during a gap skips homing.
-Keep the home path clear.
-
-For an optional read-only check, use
-`uv run spill --config config/local.json doctor --zero-shot --cameras`.
-For model preview with energized arms holding position, use `--shadow --zero-shot
---no-park` instead of `--hardware --zero-shot`.
-
-## Run the complete offline demo
-
-```bash
-cd /home/yambox/karma/spill
 uv sync --locked
 uv sync --locked --project dream_runtime
-uv run spill run "Pour all pills from the source cup into the empty cup"
 ```
 
-This starts **mock mode** without API calls or motor access. Open the printed
-Viser URL (normally `http://127.0.0.1:8080`). The demo exits after exercising the
-pipeline and reports `unverified`, not a fabricated manipulation success.
+On this cell, `config/local.json` already contains the device mappings below.
+For a fresh checkout of the same cell, create it from the supplied profile
+(the command preserves an existing local configuration):
 
 ```bash
-uv run spill run "Exercise the harness" --no-viz
-uv run pytest -q
-uv run ruff check src tests
+cp -n config/pill-transfer.example.json config/local.json
 ```
 
-Python 3.12 and dependencies are managed by uv. Karma is an editable dependency
-at `..`; do not move Spill away from that checkout without updating the path.
-All relative configuration/artifact paths resolve from the current directory;
-run these commands from `spill/`.
+For another rig, edit the CAN interfaces and camera serials before running.
 
-## Configure calibrated geometric checks (optional)
-
-This section applies when running without `--zero-shot`. The zero-shot path above
-does not require a measured calibration file or its verification flags.
+Set the Dream API key in your terminal:
 
 ```bash
-uv run spill init
-uv run spill --config config/local.json calibrate
+export DREAM_API_KEY="your-dream-api-key"
+uv run spill
 ```
 
-Edit `config/local.json` with the real CAN interfaces and camera serials.
-`config/calibration.json` is an **unverified template**, not a physical calibration.
-Follow [commissioning](docs/commissioning.md) before setting verification flags.
-The supplied `config/*.example.json` files are never used as measured values.
+**`uv run spill` starts a real hardware run.** With no arguments it loads
+`config/local.json`, uses the default prompt below, and runs Dream-only in
+zero-shot mode. It enables the viewer and local LeRobot v3 recording. The supplied
+profile has a five-minute task limit. Keep the workspace and home path clear and
+supervise the run.
 
-Set `OPENAI_API_KEY` and `DREAM_API_KEY` in your shell, or use Dream's supported
-credentials file for its key. `.env.example` documents names; files are not
-silently sourced. Never commit keys. Astra's default model is `gpt-6-astra`.
-Dream's checkpoint is explicit: check the IDs available to your account rather
-than silently swapping `dreamlabs/dream-1` and `dreamlabs/dream-1-beta`.
+| Default | Value |
+|---|---|
+| Controller | Dream-only; no Astra calls or OpenAI key needed |
+| Model | `dreamlabs/dream-1-beta` |
+| Left / right arm | `can_left` / `can_right` |
+| Top camera | D435 · `348523020354` |
+| Left wrist camera | D405 · `254623070863` |
+| Right wrist camera | D405 · `254623070417` |
+| Model camera roles | `top → overhead`, `left_wrist → wrist_l`, `right_wrist → wrist_r` |
+| Task | Full pill-transfer prompt below |
+| Geometry | Zero-shot: no measured scene calibration or geometric collision checks |
+| Output | `runs/<run-id>/`, including local dataset and model I/O |
+
+Camera ASIC serials are resolved through Karma. All three images are supplied to
+Dream with fresh robot state. Model availability is checked using your account;
+the harness does not silently substitute another checkpoint. Settings in your
+local JSON take precedence over the built-in model default.
+
+The no-argument shortcut is equivalent to:
 
 ```bash
-uv run spill --config config/local.json doctor --cameras --models
-uv run spill --config config/local.json calibrate --check
-uv run spill --config config/local.json run "Pick up the empty cup" --shadow --no-park
-uv run spill --config config/local.json run \
-  "Pour every pill from the source cup into the empty cup, then put both cups upright" --hardware
+uv run spill --config config/local.json run --hardware --zero-shot --dream-only
 ```
 
-**Shadow mode energizes and holds the arms.** It calls models and validates
-trajectories but does not execute their motion. Normal shutdown still parks unless
-`--no-park` is selected. To avoid energizing anything use the default mock mode,
-`doctor`, or `replay` instead.
+### API keys
 
-The default YAM profile adds hand poses with `ik={"arm":"yam","head":"joint"}`
-while retaining the model's native joint actions. Dream's full SDK runs in its own
-locked environment to avoid a Click/LeRobot dependency conflict:
+`DREAM_API_KEY` must be a valid key with access to the configured Dream checkpoint.
+Alternatively, copy `.env.example` to `.env`, fill in `DREAM_API_KEY`, then use:
 
 ```bash
-uv sync --locked --project dream_runtime
+uv run --env-file .env spill
 ```
 
-`config/dream-yam-pose.example.json` shows this profile. Its SDK worker communicates
-over local pipes and never opens hardware. For an explicitly verified checkpoint
-that needs only joint observations, `config/dream-joint-only.example.json` uses
-the lightweight client directly. Spill never starts Dream's robot station or a
-second CAN driver.
+`.env` is ignored by Git and is **not loaded automatically**. Use the exported
+variable for the plain `uv run spill` command, or pass uv’s `--env-file .env`.
+Keys are inherited by the isolated Dream worker; never put them in JSON settings
+or commit them. `OPENAI_API_KEY` is needed only for the optional `--astra-dream`
+and `--astra-only` modes.
 
-## Operator controls
+## Configure CAN interfaces and cameras
+
+Edit [`config/local.json`](config/local.json), which `uv run spill` loads
+automatically when run from this directory. The local file is Git-ignored.
+The committed [`config/pill-transfer.example.json`](config/pill-transfer.example.json)
+is the starting profile for this cell; copy it as shown in Quick start for a fresh
+checkout. Editing the example alone does not change an existing local config.
+
+Update these fields **inside the existing file**, preserving its other settings:
+
+```json
+{
+  "interfaces": {
+    "left": "can_left",
+    "right": "can_right"
+  },
+  "serials": {
+    "top": "348523020354",
+    "left_wrist": "254623070863",
+    "right_wrist": "254623070417"
+  }
+}
+```
+
+| Config field | Physical device | This cell’s value |
+|---|---|---|
+| `interfaces.left` | SocketCAN interface for the left arm | `can_left` |
+| `interfaces.right` | SocketCAN interface for the right arm | `can_right` |
+| `serials.top` | Overhead RealSense D435 ASIC serial | `348523020354` |
+| `serials.left_wrist` | Left-arm wrist RealSense D405 ASIC serial | `254623070863` |
+| `serials.right_wrist` | Right-arm wrist RealSense D405 ASIC serial | `254623070417` |
+
+Left and right refer to the physical arm assignments, not the sides of a camera
+image. Use two distinct CAN interfaces and three distinct camera serials. Keep
+serials as quoted strings; Karma resolves the ASIC identifiers to camera devices.
+
+Both the local config and the committed profile include a `_comments` object
+explaining these fields. This is supported JSON documentation, excluded from
+runtime configuration snapshots. Keep JSON valid: use `_comments` rather than
+`//` or `#` comments. API keys belong in your shell or `.env`, never in this file.
+
+After changing device assignments, check the configuration and camera availability
+without starting motors:
+
+```bash
+uv run spill --config config/local.json doctor --zero-shot --cameras
+```
+
+To use a different configuration file, select it explicitly:
+
+```bash
+uv run spill --config config/my-rig.json run --hardware --zero-shot
+```
+
+## Default task
+
+Omitting the task uses this prompt verbatim (apart from whitespace wrapping),
+defined in [`src/spill/defaults.py`](src/spill/defaults.py):
+
+Transfer the pills from the source cup into the empty cup. Approach from above and gently grasp the source cup near its rim without crushing its walls or blocking its opening. Leave the receiving cup on the table. Use all three camera views together. When the top camera cannot see the cup because an arm or gripper obscures it, use the wrist-camera views to assess the grasp, cup opening, remaining pills, and alignment with the receiving cup. Do not treat top-camera occlusion alone as task failure; pause if the necessary details are unclear in every view. Position the source cup's pouring edge over the receiving cup's opening. Slowly increase the tilt while maintaining alignment and a stable grasp. If pills remain, continue toward an almost upside-down orientation while keeping the pouring opening above the receiving cup and avoiding collisions. If pills are trapped by the gripper or a folded rim, stop rather than forcing rotation. Once transfer is complete, return the source cup upright, set it on the table, and release only when supported.
+
+This prompt describes the desired behavior. Dream-only has no separate visual
+planner checking occlusion, a folded rim, trapped pills, or task completion.
+The operator must monitor those conditions and pause or stop as needed. It runs
+until the task time limit or an operator/fault stop; it does not automatically
+certify that all pills have transferred. Reliable transfer has not been established,
+and motor-feedback gaps have occurred in trials.
+
+## Choose a run mode
+
+The no-argument shortcut starts hardware. **Explicit `spill run` stays in mock
+mode unless `--hardware` or `--shadow` is supplied.** All run modes default to the
+same task and Dream-only selection; `--dream` is an alias for `--dream-only`.
+
+```bash
+# Offline smoke run: synthetic cameras, no motors, no API calls.
+uv run spill run --no-viz
+
+# Override the task; keep the local rig and Dream-only control.
+uv run spill --config config/local.json run "Move the empty cup" --hardware --zero-shot
+
+# Inspect real model predictions with energized arms holding position.
+uv run spill --config config/local.json run --shadow --zero-shot --no-park
+
+# Opt into Astra planning/progress checks plus Dream actions (both API keys).
+uv run spill --config config/local.json run --hardware --zero-shot --astra-dream
+
+# Read-only preflight: cameras and authenticated Dream model access; no motors.
+uv run spill --config config/local.json doctor --zero-shot --cameras --models
+```
+
+Useful run options: `--seconds 120` changes the task time limit, `--no-record`
+disables dataset packaging, `--no-viz` disables Viser, and `--no-park` disables
+the home move on shutdown. Ordinary logs remain enabled with `--no-record`.
+Use `uv run spill --help` and `uv run spill run --help` for all commands.
+
+For measured geometric checks, configure and verify a physical calibration using
+[commissioning](docs/commissioning.md), then explicitly run without `--zero-shot`.
+Example calibration files are templates, not measurements. Zero-shot retains
+joint, speed, acceleration, gripper, tracking, freshness, temperature, and native
+Karma guards, but skips table, obstacle, self-collision, and inter-arm geometry.
+
+## Viewer and stopping
+
+Open the Viser URL printed at startup (port 8080 by default). The viewer includes
+all three cameras, measured arms, trajectory previews, the active task, model
+timing, gripper readouts, and pause/resume/shutdown controls. Browser loss does
+not stop the local supervisor. Use the printed bind address when connecting
+remotely; nominal base placement is labeled uncalibrated in zero-shot mode.
 
 | Control | Behavior |
 |---|---|
-| Ctrl+C / Home & Stop | Cancel model execution; invoke Karma's native home-and-shutdown path for both arms |
-| Second Ctrl+C during parking | Interrupt remaining parking; de-energize in place |
+| Pause / Hold | Invalidate predicted actions; hold measured joints and last commanded gripper opening |
+| Resume | Capture fresh observations and predict again |
+| Ctrl+C / Home & Stop | Cancel execution, then request Karma’s home-and-shutdown path |
+| Second Ctrl+C during parking | Cancel remaining parking; de-energize in place |
 | Stop Now | De-energize without parking; software control, not the physical e-stop |
-| Pause / Hold | Invalidate predicted actions; hold measured joints with the last commanded gripper opening |
-| Resume | Fresh observations and replanning; old chunks cannot resume |
-| `--no-park` | Shutdown without a home move |
 
-The viewer stays active during parking. A park failure does not skip cleanup of
-the other arm. Faults involving stale hardware/camera feedback stop in place.
-See the complete [Karma safety parity matrix](docs/safety.md).
+Sustained feedback faults stop in place. Brief feedback gaps inhibit commands and
+invalidate pending predictions; fresh feedback triggers replanning. Ctrl+C during
+a gap skips homing. See [operator guidance](docs/operations.md) and the
+[safety matrix](docs/safety.md).
 
-Access the original Karma CLI in the same environment:
+## Recordings and review
+
+Runs stay local under `runs/<run-id>/`. They include camera observations,
+`events.jsonl`, raw and accepted Dream trajectories, commands, timing summaries,
+and `episode.md`, `episode.json`, and `model_io_index.json`. Exact SDK inputs and
+outputs are indexed in the event log; credentials are not intentionally logged.
+The Dream SDK may also transmit observation recordings to its service in addition
+to inference.
+
+LeRobot v3 packaging happens **after motor shutdown**, at `lerobot_v3/` within the
+run. Recording includes motion and API waits, excludes parking, and resamples
+causally to 20 Hz with timestamps retained; gaps over 200 ms split episodes.
+Gripper convention is `0=open`, `1=closed`. Faulted/interrupted runs are not labeled
+successful. Mock mode is a joint echo with synthetic cameras, not a pouring simulator.
 
 ```bash
-uv run spill karma doctor --rig yam_bimanual
-uv run spill karma cameras --rig yam_bimanual --probe
-uv run spill karma teleop --help
+uv run spill recordings                  # Local recorded top-camera gallery
+uv run spill catalog                     # Refresh local episode index
+uv run spill report RUN_ID               # Latencies, motion time, retries, stops
+uv run spill replay RUN_ID                # Replay without hardware/API calls
+uv run spill export-v3 runs/RUN_ID        # Package an older recording
 ```
 
-These are foreground **operator** commands. They are not tools available to Astra.
-Never run another robot controller beside an active Spill hardware run.
+For optional historical context, add `--astra-dream --reference-run RUN_ID` to an
+explicit hardware run. Astra receives the old episode alongside fresh observations;
+Dream receives the newly selected instruction. No old joint sequence is replayed,
+and this is not fine-tuning. Reference episodes are not used in Dream-only mode.
 
-## Viser
-
-- Live measured arms, predicted endpoint ghosts, and left/right end-effector trails.
-- Model trails and accepted trajectories; rejected trajectory diagnostics in logs.
-- Progress markers, horizon length, observation age, and model timing.
-- Three live cameras and separate Astra/Dream input panels.
-- Original prompt, subtask list, active instruction, explanations and evidence.
-- Measured/commanded gripper openings and pause/resume/shutdown controls.
-
-Viser binds to localhost. Use SSH port forwarding for a remote operator:
-`ssh -L 8080:localhost:8080 robot-host`. Browser loss does not stop the local
-supervisor. Rendering uses a separate thread and never opens motor or camera devices.
-The gripper mesh is static in Karma's model; numeric opening readouts are authoritative.
-
-## Recording and evaluation
-
-Each run writes `runs/<id>/events.jsonl` and observation arrays. Logs include
-configuration, calibration, decisions, Dream timings, rejected/accepted chunks,
-commands, and shutdown outcome. Observation archives use full-resolution JPEG95
-for bounded disk/CPU cost; exact encoded API image inputs are recorded separately. No API keys are written by Spill. The official
-Dream SDK may also transmit its own observation recordings to Dream's service;
-this is SDK behavior in addition to inference, not a Spill live-view connection.
+Independent human counts determine evaluation success:
 
 ```bash
-uv run spill replay RUN_ID
-uv run spill replay RUN_ID --no-viz
-uv run spill evaluate --suite cup-transfer --write-scenes config/cup-scenes.json
 uv run spill label RUN_ID --initial 10 --target 10 --residue 0 --spilled 0 --upright
 uv run spill evaluate --suite cup-transfer
 ```
 
-Counts come from an independent human inspection. Occluded/tiny pills are not
-assumed to be counted correctly by an image model. Mock and shadow runs never
-contribute to the real success rate. Compare `--dream-only` against the normal
-Astra+Dream mode using the same 20 scene placements. The target of 18/20 successful
-trials is an acceptance goal, not a measured result.
+Mock and shadow runs do not contribute to the real success rate. Existing datasets
+are never overwritten; uploads and fine-tuning are not automatic. For command-aligned
+LeRobot v2.1 exports, see `uv run spill export --help`.
 
-`uv run spill export RUN_ID --output data/pouring-v1` exports uniformly sampled,
-independently labeled real command/observation segments to LeRobot v2.1 with
-right-first Dream ordering. Uniform 20 Hz recordings are explicitly downsampled
-to the service-supported 10 Hz, keeping real aligned rows. Episodes must span
-at least 1.6 seconds. It refuses nonuniform timing rather than hiding cloud
-holds as a fabricated fixed-rate trajectory. Use `--include-failures` only when
-intentionally preparing failure data. Collect corrective demonstrations with
-Karma teleop; Karma's v3 datasets require an explicit v2.1 conversion for the
-Dream service (do not relabel the format version). Upload/fine-tuning is not automatic.
+## Development and further reading
 
-## Design and limits
+```bash
+uv run pytest -q
+uv run ruff check src tests
+```
 
-See [architecture](docs/architecture.md), [commissioning](docs/commissioning.md),
-and [sources](docs/research.md). Default inference is synchronous; adaptive
-prefetch is opt-in after latency and continuity validation. Model targets are
-bounded to joint ranges and approached within motion limits; nonfinite inputs,
-expired predictions and infeasible bounded paths are rejected. Calibration-based
-capsules protect the modeled static cell; they do not discover new obstacles or
-prove mesh-level clearance. General tabletop performance is task-dependent.
+- [Architecture](docs/architecture.md) and [validation scope](docs/validation.md)
+- [Operating and troubleshooting guide](docs/operations.md)
+- [Dream-only and Astra + Dream rollout review](docs/rollout-review-2026-11-08.md)
+- [Timing investigation](docs/timing-2026-11-08.md)
+- [Experimental Astra-only actions](docs/astra-only.md)
+- [Research sources](docs/research.md)
 
-### Dream rollout findings and timing fixes
-
-See the [Dream-only and Astra + Dream rollout review](docs/rollout-review-2026-11-08.md)
-for important episodes, exact prompts, dataset/log links and evidence limits, and
-[the timing investigation](docs/timing-2026-11-08.md) for recording isolation and
-Dream session continuity fixes.
+The original Karma CLI is available through `uv run spill karma …`, for example
+`uv run spill karma doctor --rig yam_bimanual`. Do not run another robot controller
+alongside an active Spill hardware run.

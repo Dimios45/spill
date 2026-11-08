@@ -36,7 +36,7 @@ class Client:
         self.frames, self.state = frames, state
 
     def get_models(self):
-        return [SimpleNamespace(id="dreamlabs/dream-1")]
+        return [SimpleNamespace(id="dreamlabs/dream-1-beta")]
 
     def get_action(self, **kwargs):
         self.commanded = kwargs["commanded"]

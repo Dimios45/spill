@@ -96,6 +96,7 @@ class Runner:
         self.commanded = None
         self.history = []
         self.planner_name = getattr(planner, "display_name", "Astra")
+        self.policy_name = getattr(policy, "display_name", "Dream")
         self.report = ExecutionReport()
 
     def _capture_observation(self):
@@ -418,6 +419,8 @@ class Runner:
                         )
                         if decision.recovery:
                             motion_budget = self.settings.recovery_window_s
+                        if getattr(self.policy, "single_step", False):
+                            motion_budget = decision.duration_s
                         self.recorder.event(
                             "execution_window", requested_s=decision.duration_s,
                             effective_s=motion_budget, generation=generation,
@@ -425,7 +428,7 @@ class Runner:
                             completion="whole_chunk",
                         )
                         print(
-                            f"Dream {'recovery' if decision.recovery else 'execution'} window: "
+                            f"{self.policy_name} {'recovery' if decision.recovery else 'execution'} window: "
                             f"{motion_budget:g}s commanded motion "
                             f"before {self.planner_name} review (finish current chunk)", flush=True,
                         )
@@ -451,7 +454,7 @@ class Runner:
                         self.feed_enabled.set()
                         stage = "execute"
                 elif stage == "execute":
-                    self.viewer.publish(status="Dream executing", commanded=self.commanded)
+                    self.viewer.publish(status=f"{self.policy_name} executing", commanded=self.commanded)
                     budget_used = self.report.elapsed_s >= motion_budget - 1e-9
                     if budget_used and not self.motion_job.pending and chunk is None:
                         self.feed_enabled.clear()
@@ -462,7 +465,7 @@ class Runner:
                         self.recorder.event("subtask_report", **dataclasses.asdict(self.report))
                         print(
                             f"Subtask: {self.report.elapsed_s:.1f}s commanded motion, "
-                            f"{self.report.policy_wait_s:.1f}s Dream action preparation, "
+                            f"{self.report.policy_wait_s:.1f}s {self.policy_name} action preparation, "
                             f"{self.report.chunks} chunks; returning to {self.planner_name}",
                             flush=True,
                         )
@@ -497,7 +500,7 @@ class Runner:
                     ):
                         self.motion_job.executed_at_submit = self.report.rows
                         print(
-                            f"Dream inference: {self.report.elapsed_s:.1f}/"
+                            f"{self.policy_name} inference: {self.report.elapsed_s:.1f}/"
                             f"{motion_budget:g}s motion budget used",
                             flush=True,
                         )
@@ -517,7 +520,7 @@ class Runner:
                         if getattr(self.policy, "last_request", None) is not None:
                             self.viewer.publish(dream_observation=self.policy.last_request)
                         if error:
-                            message = f"Dream inference failed: {type(error).__name__}: {error}"
+                            message = f"{self.policy_name} inference failed: {type(error).__name__}: {error}"
                             retryable = getattr(error, "retryable", False) or type(
                                 error
                             ).__name__ in ("DreamTimeout", "DreamSessionExpired")
@@ -557,7 +560,7 @@ class Runner:
                         chunk, row, next_tick = new_chunk, 0, now
                         self.report.chunks += 1
                         print(
-                            f"Dream: accepted {chunk.length} bounded rows at {chunk.hz:g} Hz; "
+                            f"{self.policy_name}: accepted {chunk.length} bounded rows at {chunk.hz:g} Hz; "
                             f"prediction age {now - chunk.requested_at:.2f}s",
                             flush=True,
                         )

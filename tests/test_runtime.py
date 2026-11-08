@@ -502,6 +502,26 @@ def test_skew_fault_homes_only_with_healthy_motor_feedback(tmp_path):
             cleanup(r)
 
 
+def test_astra_only_executes_one_chunk_then_reobserves(tmp_path):
+    import pytest
+    from test_astra_actions import Client
+
+    from spill.astra_actions import AstraActions
+
+    r = harness(tmp_path)
+    p = AstraActions(r.settings, r.recorder,
+                     {n: (np.full(6, -3.), np.full(6, 3.)) for n in ARMS}, client=Client())
+    r.planner = r.policy = p
+    r.settings.execution_window_s = 20
+    try:
+        result = r.run("test")
+        assert result.outcome == "unverified"
+        assert p.client.calls == 2
+        assert r.history[0]['report']['chunks'] == 1
+        assert r.history[0]['report']['elapsed_s'] == pytest.approx(2)
+    finally:
+        p.close()
+        cleanup(r)
 
 
 def test_dream_only_checkpoints_keep_same_session(tmp_path):

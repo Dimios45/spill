@@ -32,7 +32,7 @@ class Limits(Strict):
 
 
 class DreamProfile(Strict):
-    checkpoint: str = "dreamlabs/dream-1"
+    checkpoint: str = "dreamlabs/dream-1-beta"
     verified: bool = False
     # Verify joint zeros, signs, camera orientation and base/TCP against the selected model.
     action_hz: float = Field(default=20, ge=1, le=100)
@@ -44,6 +44,8 @@ class DreamProfile(Strict):
 
 
 class Settings(Strict):
+    # JSON-compatible documentation; excluded from runtime configuration snapshots.
+    comments: dict[str, str] = Field(default_factory=dict, alias="_comments", exclude=True)
     interfaces: dict[str, str] = {"left": "can0", "right": "can1"}
     serials: dict[str, str] = {name: "SET_ME_" + name for name in CAMERAS}
     calibration: str = "config/calibration.json"

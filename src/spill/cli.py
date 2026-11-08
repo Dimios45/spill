@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import sys
 import threading
 import time
 from pathlib import Path
@@ -16,13 +17,15 @@ from .config import (
     run_calibration,
     write_json,
 )
+from .defaults import DEFAULT_PROMPT
 from .types import SpillError
 
 
 def parser():
     p = argparse.ArgumentParser(
         prog="spill",
-        description="YAM tabletop harness. Default runs are MOCK; --hardware energizes the rig.",
+        description="YAM harness. No arguments: Dream-only hardware run using config/local.json. "
+        "Explicit run: MOCK unless --hardware or --shadow is supplied.",
     )
     p.add_argument("--config", help="JSON settings (paths relative to current working directory)")
     commands = p.add_subparsers(dest="command", required=True)
@@ -47,7 +50,7 @@ def parser():
     calibration.add_argument("--capture-intrinsics", action="store_true")
     run = commands.add_parser("run")
     run.add_argument(
-        "prompt", nargs="?", help="Task text; if omitted, ask in the terminal before startup"
+        "prompt", nargs="?", help="Task text; defaults to the three-camera pill-transfer prompt"
     )
     run.add_argument("--hardware", action="store_true", help="Use both real arms and cloud APIs")
     run.add_argument(
@@ -69,9 +72,19 @@ def parser():
         help="Save rollout as local LeRobot v3 after shutdown (default: enabled)",
     )
     run.add_argument("--grasp", choices=["top-down", "auto"], default="auto")
-    run.add_argument(
-        "--dream-only", action="store_true", help="Baseline: pass the full task directly to Dream"
+    modes = run.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--dream-only", "--dream", dest="dream_only", action="store_true",
+        help="Pass the full task directly to Dream (default)"
     )
+    modes.add_argument(
+        "--astra-only", action="store_true", help="Experimental Astra joint actions; no Dream calls"
+    )
+    modes.add_argument(
+        "--astra-dream", dest="dream_only", action="store_false",
+        help="Use Astra planning and progress checks with Dream actions",
+    )
+    run.set_defaults(dream_only=True)
     run.add_argument("--seconds", type=float, help="Override task time limit")
     run.add_argument(
         "--reference-run", help="Prior local run ID/path as historical context for Astra"
@@ -119,10 +132,7 @@ def run_path(settings, value):
 
 def task_prompt(value):
     if value is None:
-        try:
-            value = input("Task for this rollout: ")
-        except (EOFError, KeyboardInterrupt):
-            raise SpillError("Task entry cancelled; robot was not started") from None
+        value = DEFAULT_PROMPT
     if not value.strip():
         raise SpillError("Enter a non-empty task; robot was not started")
     return value.strip()
@@ -210,6 +220,8 @@ def calibrate(settings, args):
 
 def run(settings, args):
     args.prompt = task_prompt(args.prompt)
+    if args.reference_run and (args.dream_only or args.astra_only):
+        raise SpillError("--reference-run requires --astra-dream")
     if args.reference_run:
         from .episodes import reference_context
 
@@ -230,6 +242,8 @@ def run(settings, args):
     from .viewer import Viewer
 
     hardware = args.hardware or args.shadow
+    if args.astra_only and not hardware:
+        raise SpillError("Use --astra-only with --shadow to validate, or --hardware to execute")
     settings.grasp = args.grasp
     if args.grasp == "top-down":
         args.prompt += (
@@ -275,14 +289,20 @@ def run(settings, args):
                     raise SpillError(f"Karma preflight failed: {reports}")
             cameras.start()
             cameras.wait_ready()
-            planner = (
-                BaselinePlanner(settings.limits.task_timeout_s)
-                if args.dream_only
-                else Astra(settings, recorder)
-                if hardware
-                else MockPlanner()
-            )
-            policy = Dream(settings, recorder) if hardware else MockPolicy()
+            if args.astra_only:
+                from .astra_actions import AstraActions
+
+                planner = policy = AstraActions(settings, recorder, joint_limits(rig))
+                recorder.event("controller", mode="astra_only", action_space="bounded_joint_delta")
+            else:
+                planner = (
+                    BaselinePlanner(settings.limits.task_timeout_s)
+                    if args.dream_only
+                    else Astra(settings, recorder)
+                    if hardware
+                    else MockPlanner()
+                )
+                policy = Dream(settings, recorder) if hardware else MockPolicy()
             if hardware:
                 policy.check_model()
             viewer = Viewer(
@@ -409,7 +429,12 @@ class ShadowRobot:
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        argv = ["--config", "config/local.json", "run", "--hardware", "--zero-shot"]
     args = parser().parse_args(argv)
+    if getattr(args, "astra_only", False):
+        args.dream_only = False
     try:
         settings = load_settings(args.config)
         if args.command == "recordings":

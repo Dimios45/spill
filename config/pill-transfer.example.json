@@ -1,0 +1,55 @@
+{
+  "_comments": {
+    "setup": "Edit interfaces and serials below for your physical rig. Bare uv run spill loads config/local.json from the current directory. This local file is Git-ignored; config/pill-transfer.example.json is the committed template.",
+    "interfaces.left": "Linux SocketCAN interface connected to the LEFT arm; this cell uses can_left.",
+    "interfaces.right": "Linux SocketCAN interface connected to the RIGHT arm; this cell uses can_right. The two arms must use distinct interfaces.",
+    "serials.top": "ASIC serial of the overhead RealSense D435. Keep serial numbers as quoted strings; Karma resolves ASIC serials to camera devices.",
+    "serials.left_wrist": "ASIC serial of the RealSense D405 mounted on the LEFT wrist, not the left side of an image.",
+    "serials.right_wrist": "ASIC serial of the RealSense D405 mounted on the RIGHT wrist. All three camera serials must be distinct.",
+    "dream.checkpoint": "Default Dream-only model: dreamlabs/dream-1-beta. Model access is checked with your account; no silent checkpoint substitution.",
+    "credentials": "Set DREAM_API_KEY in your shell or use uv run --env-file .env spill. Do not store API keys here. OPENAI_API_KEY is only needed for Astra modes.",
+    "calibration": "Bare uv run spill uses zero-shot mode and skips measured geometric collision checks. A calibration template is not a measured calibration."
+  },
+  "interfaces": {
+    "left": "can_left",
+    "right": "can_right"
+  },
+  "serials": {
+    "top": "348523020354",
+    "left_wrist": "254623070863",
+    "right_wrist": "254623070417"
+  },
+  "calibration": "config/calibration.json",
+  "model": "gpt-6-astra",
+  "dream": {
+    "checkpoint": "dreamlabs/dream-1-beta",
+    "verified": false,
+    "action_hz": 20.0,
+    "execution_horizon": 30,
+    "timeout_ms": 15000,
+    "ik": {
+      "arm": "yam",
+      "head": "joint"
+    },
+    "sdk_runtime": "isolated",
+    "pacing": "sync"
+  },
+  "limits": {
+    "state_age_s": 0.25,
+    "camera_skew_s": 0.1,
+    "max_velocity": 0.3,
+    "max_acceleration": 1.5,
+    "gripper_velocity": 1.0,
+    "tracking_error": 0.25,
+    "max_chunk_age_s": 10.0,
+    "temperature_c": 65.0,
+    "collision_margin": 0.015,
+    "sweep_step_rad": 0.02,
+    "task_timeout_s": 300.0,
+    "retries_per_subtask": 2,
+    "hold_timeout_s": 60.0
+  },
+  "port": 8080,
+  "run_dir": "runs",
+  "viewer_hz": 8.0
+}

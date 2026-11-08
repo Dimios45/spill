@@ -103,6 +103,13 @@ waiting. Give Dream a coherent manipulation goal without micromanaging its joint
 
 
 class Astra:
+    system_prompt = SYSTEM
+    response_format = Decision
+    reasoning_effort = "medium"
+
+    def extra_context(self):
+        return {}
+
     def __init__(self, settings, recorder, client=None):
         if client is None:
             if not os.getenv("OPENAI_API_KEY"):
@@ -125,6 +132,7 @@ class Astra:
                         reference_episode=self.settings.reference_context,
                         execution_window_s=self.settings.execution_window_s,
                         recovery_window_s=self.settings.recovery_window_s,
+                        **self.extra_context(),
                     )
                 ),
             }
@@ -143,16 +151,16 @@ class Astra:
             "astra_request",
             observation_id=observation.id,
             model=self.settings.model,
-            system=SYSTEM,
+            system=self.system_prompt,
             content=content,
         )
         started = time.monotonic()
         try:
             response = self.client.responses.parse(
                 model=self.settings.model,
-                reasoning={"effort": "medium"},
-                input=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
-                text_format=Decision,
+                reasoning={"effort": self.reasoning_effort},
+                input=[{"role": "system", "content": self.system_prompt}, {"role": "user", "content": content}],
+                text_format=self.response_format,
                 max_output_tokens=2500,
             )
         except Exception as exc:
