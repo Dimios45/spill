@@ -14,18 +14,60 @@ Start with the [operating and troubleshooting guide](docs/operations.md).
 The [latest diagnosed trial](docs/rollout-2026-11-06.md) distinguishes a planner
 pause from a hardware fault. See [validation](docs/validation.md) for test scope.
 
-## Zero-shot on your YAM
+## Episode review and explicit reference context
 
-To record a local LeRobot v3 dataset using Karma's writer:
+Every finished run now gets `episode.md`, `episode.json` and `model_io_index.json`.
+`runs/catalog.md` indexes local runs with their exact task, dataset ID/path,
+outcome, decisions and model I/O references. Full API/SDK inputs and outputs stay
+in `events.jsonl`; the index points to their line numbers without duplicating
+camera payloads. Build or refresh documentation for older runs with
+`uv run spill catalog`. Damaged/incomplete logs and missing datasets are marked;
+source artifacts are never rewritten. These local reports are not uploaded or
+committed automatically.
+
+To use an episode as historical context for a new task:
 
 ```bash
-uv run spill --config config/local.json run \
-  "Pour all pills into the empty cup" --hardware --zero-shot --grasp top-down --record
+uv run spill --config config/local.json run --hardware --zero-shot \
+  --reference-run 20261107T101729-6bbb5b03
 ```
 
-Top-down cup grasping is now the default instruction for both Astra and Dream;
-`--grasp auto` removes that constraint. It is a policy instruction, not a
-geometrically enforced orientation constraint.
+Enter the desired task when prompted. Astra receives the prior task, outcome,
+decisions and any `operator_notes.json` alongside **fresh** camera/robot state.
+Dream receives the newly chosen subtask; no old joint sequence is replayed.
+This is explicit contextual adaptation, not fine-tuning or persistent model
+memory. Without `--reference-run`, no prior episode is automatically supplied.
+The source cup deformation in that episode is operator-reported and visually
+flagged by Astra; it is not a measured grip-force diagnosis. New general guidance
+asks for earlier reassessment and supported recovery when deformation obstructs
+the task. It does not implement force control or guarantee a non-crushing grasp.
+
+## Zero-shot on your YAM
+
+Enter your task in the terminal; each rollout records locally using Karma's
+LeRobot v3 writer by default:
+
+```bash
+uv run spill --config config/local.json run --hardware --zero-shot
+# Task for this rollout: <type your task and press Enter>
+```
+
+Astra's context gives general object-handling guidance: consider fragility,
+stability, contents and secure support, and move only objects necessary for the
+task. It does not require grasping both cups or a fixed orientation. The task text
+you enter is preserved. You may also supply it as the positional command argument.
+No hardware is started before task entry is complete. The legacy
+`--grasp top-down` flag remains an explicit opt-in that adds cup-specific language;
+omit it for general tasks. `--no-record` disables v3 dataset capture, but ordinary
+run logs and model I/O remain enabled.
+
+Model audit events include `astra_request` (system context, task, history and
+images), `astra_response` (returned response), `astra` (parsed decision/usage),
+`dream_session` (instruction/configuration), `dream_tick` (images and state sent
+to the SDK), `dream_request` (command anchor), and `dream_raw`/`dream` (returned
+action arrays before/after normalization). Errors and request timing are retained.
+Dream logs cover the SDK interface; they are not a capture of its private HTTP
+transport or internal model state. Credentials are never intentionally logged.
 
 Recording includes observations and current commanded targets during motion and
 API waits; parking is excluded. Images are archived asynchronously, then Karma's

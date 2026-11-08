@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from spill.config import Settings
-from spill.providers import Dream, normalize_dream_actions, planner_retryable
+from spill.providers import Astra, Dream, MockPlanner, normalize_dream_actions, planner_retryable
 from spill.types import ARMS, CAMERAS, Frame, Observation, SafetyError
 
 
@@ -68,7 +68,7 @@ def test_dream_roles_gripper_and_chunk_mapping(grippers):
     assert set(client.frames) == {"video.overhead", "video.wrist_l", "video.wrist_r"}
     assert client.state["state.left_gripper"][0] == 1
     assert client.state["state.left_arm"].dtype == np.float32
-    assert "top-down gripper" in client.state["prompt"]
+    assert client.state["prompt"] == "pour"
     assert chunk.arms["right"][0, -1] == 0
     assert chunk.arms["left"][0, -1] == 1
     assert chunk.arms["left"][0, 0] == 0.1
@@ -124,3 +124,51 @@ def test_planner_retry_classification():
         )
         assert planner_retryable(error) == (code in (408, 409, 429, 500, 503))
     assert not planner_retryable(ValueError("invalid decision"))
+
+
+def test_astra_logs_unmodified_task_and_full_response():
+    import json
+
+    task = "Move only the requested object."
+    decision = MockPlanner().decide(task, None, [])
+    response = SimpleNamespace(
+        output_parsed=decision,
+        usage=None,
+        _request_id="req_test",
+        model_dump=lambda **_: {"id": "resp_test", "output": [{"text": "test output"}]},
+    )
+    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **_: response))
+    recorder = Recorder()
+    now = time.monotonic()
+    obs = Observation(
+        1,
+        0,
+        now,
+        {n: Frame(np.zeros((10, 10, 3), np.uint8), now, 1) for n in CAMERAS},
+        {n: np.zeros(7) for n in ARMS},
+        {n: now for n in ARMS},
+    )
+    settings = Settings(
+        reference_context={"run_id": "prior_trial", "operator_notes": ["deformed object"]}
+    )
+    Astra(settings, recorder, client=client).decide(task, obs, [])
+    request = next(e for kind, e in recorder.events if kind == "astra_request")
+    assert json.loads(request["content"][0]["text"])["task"] == task
+    assert json.loads(request["content"][0]["text"])["reference_episode"]["run_id"] == "prior_trial"
+    reply = next(e for kind, e in recorder.events if kind == "astra_response")
+    assert reply["response"]["id"] == "resp_test"
+
+
+def test_malformed_planner_json_retries_but_invalid_fields_do_not():
+    from pydantic import ValidationError
+
+    from spill.types import Decision
+
+    with pytest.raises(ValidationError) as truncated:
+        Decision.model_validate_json('{"action": "execute",')
+    assert planner_retryable(truncated.value)
+    decision = MockPlanner().decide("test", None, []).model_dump()
+    decision["duration_s"] = 1000
+    with pytest.raises(ValidationError) as invalid:
+        Decision.model_validate(decision)
+    assert not planner_retryable(invalid.value)

@@ -104,7 +104,7 @@ class Decision(BaseModel):
     evidence: str
     outcome: Literal["in_progress", "success", "unverified", "failed"]
     # A subtask is short enough to reobserve instead of acting blindly for a minute.
-    duration_s: float = Field(ge=1, le=15)
+    duration_s: float = Field(ge=1, le=30)
     recovery: bool
 
 

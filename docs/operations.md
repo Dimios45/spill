@@ -24,17 +24,20 @@ and account-accessible model checkpoint. The tested account used
 silently substitute checkpoints when an account rejects one.
 
 ```bash
-uv run spill --config config/local.json run \
-  "Pour all pills into the empty cup" \
-  --hardware --zero-shot --grasp top-down --record
+uv run spill --config config/local.json run --hardware --zero-shot
+# Task for this rollout: <type your instruction>
 ```
 
 This energizes both arms and calls paid APIs. Without `--hardware` or `--shadow`,
 the command uses mock cameras and joint echoes without API calls. `--shadow`
 energizes the arms to hold; it is not an unpowered simulation.
 
-Top-down grasping is passed to both models. It is a language constraint, not a
-guarantee of physical orientation. Zero-shot mode disables table, obstacle and
+Task entry happens before camera/model/motor startup. A task may alternatively be
+provided as the positional argument. Astra receives general object-safety context
+and your unchanged task; it chooses necessary objects and arms from the scene.
+There is no default cup-specific or top-down instruction. The optional legacy
+`--grasp top-down` flag adds that instruction explicitly; omit it for general tasks.
+Zero-shot mode disables table, obstacle and
 inter-arm geometric checks. Viser uses nominal base placement in this mode.
 
 Open **http://192.168.0.184:8080** for this cell, or
@@ -94,7 +97,10 @@ uv run spill replay runs/<run-id>
 `report` reads local artifacts and writes `summary.json`; `replay` does not command
 the real arms. Keep these events separate when reviewing a run:
 
-- `astra_request`, `astra`, `astra_error`: planner input, decision, timing and errors.
+- `astra_request`, `astra_response`, `astra`, `astra_error`: planner input, full
+  returned response, parsed decision, timing and errors.
+- `dream_session`, `dream_tick`, `dream_request`, `dream_error`: subtask/config,
+  encoded images and state submitted to the SDK, action request anchor and errors.
 - `dream_raw`, `dream`: predicted actions before/after gripper normalization.
 - `accepted`, `command`: bounded trajectories and actually dispatched commands.
 - `subtask_report`: actual motion, inference and wall time.
@@ -105,13 +111,21 @@ the real arms. Keep these events separate when reviewing a run:
 Native node logs are under `logs/`. `ERROR-ACTIVE` in Linux CAN output is the
 normal bus state, not an error alarm. Zero interface errors do not prove that
 every motor replied or that its frames reached the correct driver cache. The
-observed right-arm joint-1/joint-4 feedback losses remain unresolved. Distinguishing
-motor reply loss from driver processing requires time-aligned CAN/native logs;
-increasing the timeout is not a diagnosis.
+2026-11-07 investigation found and fixed a native DM parser bug: it treated a
+status position low byte of `0x55` as a register-write acknowledgement, dropping
+valid feedback and leaving the cached timestamp stale. Register acknowledgements
+are now distinguished by their CAN channel as well as opcode. An offline test
+covers every position low byte on both supported status reply channels. Rebuild
+the native Karma package after updating this source; Python editable installs
+alone do not update the executable. This is a reproduced parser defect, not proof
+that every earlier gap had this cause. Distinguishing remaining motor reply loss
+from driver processing requires time-aligned CAN/native logs; increasing the
+timeout is not a diagnosis. See [the episode investigation](feedback-2026-11-07.md).
 
 ## Recording and data integrity
 
-With `--record`, observations and current commanded targets are archived during
+Recording is on by default (`--no-record` opts out). Observations and current
+commanded targets are archived during
 motion and API holds. After motor shutdown, Karma's LeRobot v3 sink writes
 `runs/<run-id>/lerobot_v3/`. Leave the process running until it prints the final
 dataset path. Parking is not recorded. No upload occurs.
@@ -137,3 +151,92 @@ preserve it for diagnosis instead of labeling it valid or deleting the evidence.
 
 `runs/`, `logs/`, local configuration/calibration, environments and credentials are
 excluded from Git. Commit source, tests, example configuration and documentation.
+
+## Stationary inspection loops
+
+Run `20261107T110030-b671bd3d` executed eight Dream chunks (19.2 seconds of
+commanded motion), then Astra repeatedly requested `observe` because rim contact
+and cup support were occluded. This was an inspection-limit pause, not a CAN
+shutdown. After Resume, the old observation counter caused another pause after
+just one inspection. Ctrl+C subsequently homed both arms and stopped normally.
+The recorded dataset is `local/20261107T110030-b671bd3d` (2603 frames).
+
+The runtime now resets the inspection counter on control-generation changes,
+including Resume. Each decision prints its action, latency, subtask, explanation,
+evidence and instruction. `observe` prints its count out of three and explicitly
+states that it acquires images without moving either the robot or cameras.
+Structured `observation_wait` events retain this count and the reason; recent
+inspection decisions also reach Astra through its history. Its instructions
+explain that stationary inspection cannot necessarily resolve occlusion: choose
+a distinct recovery only when current evidence supports safety, otherwise pause
+and explain the missing evidence and needed operator intervention. Three
+consecutive observation decisions still pause. Resume grants a fresh inspection
+budget; it does not establish a secure grasp or guarantee progress.
+
+## Planner errors and supported recovery
+
+Run `20261107T110744-f54fe2d8` stopped planning after a 45.3-second API timeout
+and a subsequent malformed-JSON validation error (30.8 seconds). The latter was
+previously nonretryable. Its raw API response was not retained because SDK parsing
+raised before returning it, so token-limit exhaustion is not established.
+Malformed JSON now uses the existing bounded planner retry budget, holding with
+fresh observations between attempts. Partial instructions are never executed.
+Invalid schema field values remain nonretryable. Error logs now include validation
+error details without the raw input payload. The timeout and malformed response
+share the retry budget; neither resets it. Exhaustion still pauses.
+
+Astra guidance now explicitly considers set-down, inspect support, release and
+withdraw, then a different grasp as separate recovery steps. Set-down is skipped
+if the object is already supported. Each step requires fresh visual evidence;
+a held object is not released in midair and no blind descent is requested.
+Execution history now retains the recovery flag, subtask, explanation and evidence;
+the terminal prints recovery attempt counts. These are planner instructions using
+the existing guarded Dream executor, not a guaranteed placement primitive or
+force-controlled grasp. A safe recovery can still be unavailable, requiring pause.
+
+## Dream execution window
+
+`execution_window_s` now defaults to `20` seconds of commanded motion per ordinary Astra
+execute decision. Recovery decisions (`recovery=true`) instead use
+`recovery_window_s`, defaulting to 7 seconds. Dream continues receiving fresh observations and generating
+short action chunks; this is not a 20-second open-loop trajectory. Astra reviews
+at the first completed chunk after that budget. With 48 rows at 20 Hz, nine
+chunks total 21.6 seconds; API waits add wall time. Motor/telemetry guards,
+operator Pause and Ctrl+C can interrupt before the budget expires.
+
+The planner receives the configured interval and is instructed to choose a
+coherent subtask, hold after accomplishing it, and not rely on a shorter duration
+for safety. This is language guidance, not a low-level task-completion detector.
+Astra's visual checks for deformation, alignment and task completion occur less
+often. Longer windows do not fix an incorrect grasp or camera occlusion.
+`execution_window` events record requested and effective budgets. Set
+`"execution_window_s": null` in your config to restore planner-selected timing,
+or set a number from 1 to 30 to choose another interval.
+
+
+Recovery windows also finish the current validated chunk: at 48 rows / 20 Hz,
+a 7-second recovery budget normally executes three chunks (7.2 seconds), then
+requests fresh Astra assessment. Ordinary execution remains 20 seconds (normally
+21.6). Terminal output and `execution_window` events identify recovery windows.
+The planner receives both settings and is instructed to label resets, withdrawal,
+and retries after failure as recovery. This depends on planner classification;
+it is not an automatic physical grasp-failure detector.
+
+Localized rim pinches may legitimately put one finger just inside and one outside
+the cup. Planner guidance no longer treats insertion alone as a failure: it must
+consider localized engagement, deformation, contents clearance, an open pouring
+edge and support. Insertion alone also does not prove secure contact. Unresolved
+support or contact uncertainty can still justify holding. Motor safety limits and
+operator controls are unchanged.
+
+## Recorded top-camera gallery
+
+Run `uv run spill --config config/local.json recordings --host 0.0.0.0 --port 8085`
+and open `http://192.168.0.184:8085` from the LAN. This read-only service lists
+runs newest first with their task prompts and all exported top-camera MP4 parts.
+Refresh the page after a rollout finishes exporting. Runs without exported video
+are explicitly marked; this service does not convert raw archives or show a live
+camera stream. Video seeking is supported. Only the gallery and inventoried top
+videos are served, not arbitrary run logs or configuration files. No API calls
+or motor access are involved. The viewer has no authentication; devices able to
+reach the port can read the displayed prompts and videos.

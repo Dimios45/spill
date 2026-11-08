@@ -48,7 +48,11 @@ class Settings(Strict):
     serials: dict[str, str] = {name: "SET_ME_" + name for name in CAMERAS}
     calibration: str = "config/calibration.json"
     model: str = "gpt-6-astra"
-    grasp: Literal["top-down", "auto"] = "top-down"
+    grasp: Literal["top-down", "auto"] = "auto"
+    reference_context: dict | None = None
+    # None restores planner-selected durations. Complete a validated chunk before review.
+    execution_window_s: float | None = Field(default=20, ge=1, le=30)
+    recovery_window_s: float = Field(default=7, ge=1, le=15)
     planner_timeout_s: float = Field(default=45, gt=0, le=120)
     planner_retries: int = Field(default=2, ge=0, le=3)
     planner_retry_delay_s: float = Field(default=2, ge=0, le=30)

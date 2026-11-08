@@ -26,6 +26,9 @@ def parser():
     )
     p.add_argument("--config", help="JSON settings (paths relative to current working directory)")
     commands = p.add_subparsers(dest="command", required=True)
+    recordings = commands.add_parser("recordings", help="Read-only recorded top-camera gallery")
+    recordings.add_argument("--host", default="0.0.0.0")
+    recordings.add_argument("--port", type=int, default=8085)
     init = commands.add_parser("init", help="Write example local settings, without overwriting")
     init.add_argument("--output", default="config/local.json")
     doctor = commands.add_parser("doctor", help="Read-only rig/configuration preflight")
@@ -43,7 +46,9 @@ def parser():
     calibration.add_argument("--check", action="store_true")
     calibration.add_argument("--capture-intrinsics", action="store_true")
     run = commands.add_parser("run")
-    run.add_argument("prompt")
+    run.add_argument(
+        "prompt", nargs="?", help="Task text; if omitted, ask in the terminal before startup"
+    )
     run.add_argument("--hardware", action="store_true", help="Use both real arms and cloud APIs")
     run.add_argument(
         "--zero-shot",
@@ -58,13 +63,19 @@ def parser():
     run.add_argument("--no-viz", action="store_true")
     run.add_argument("--no-park", action="store_true")
     run.add_argument(
-        "--record", action="store_true", help="Save rollout as local LeRobot v3 after shutdown"
+        "--record",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Save rollout as local LeRobot v3 after shutdown (default: enabled)",
     )
-    run.add_argument("--grasp", choices=["top-down", "auto"], default="top-down")
+    run.add_argument("--grasp", choices=["top-down", "auto"], default="auto")
     run.add_argument(
         "--dream-only", action="store_true", help="Baseline: pass the full task directly to Dream"
     )
     run.add_argument("--seconds", type=float, help="Override task time limit")
+    run.add_argument(
+        "--reference-run", help="Prior local run ID/path as historical context for Astra"
+    )
     replay = commands.add_parser("replay")
     replay.add_argument("run_id")
     replay.add_argument("--speed", type=float, default=1)
@@ -73,6 +84,7 @@ def parser():
         "report", help="Summarize a recorded rollout; no hardware/API access"
     )
     report.add_argument("run_id")
+    commands.add_parser("catalog", help="Document all local runs and index model I/O; no API calls")
     v3 = commands.add_parser(
         "export-v3", help="Package recorded samples with Karma's LeRobot v3 writer"
     )
@@ -103,6 +115,17 @@ def parser():
 def run_path(settings, value):
     path = Path(value)
     return path if path.is_dir() else Path(settings.run_dir) / value
+
+
+def task_prompt(value):
+    if value is None:
+        try:
+            value = input("Task for this rollout: ")
+        except (EOFError, KeyboardInterrupt):
+            raise SpillError("Task entry cancelled; robot was not started") from None
+    if not value.strip():
+        raise SpillError("Enter a non-empty task; robot was not started")
+    return value.strip()
 
 
 def doctor(settings, args):
@@ -186,6 +209,13 @@ def calibrate(settings, args):
 
 
 def run(settings, args):
+    args.prompt = task_prompt(args.prompt)
+    if args.reference_run:
+        from .episodes import reference_context
+
+        settings.reference_context = reference_context(run_path(settings, args.reference_run))
+    else:
+        settings.reference_context = None
     from openpi_control.cli import preflight_rig
     from openpi_control.safety import joint_limits
 
@@ -314,11 +344,16 @@ def run(settings, args):
                         threading.Thread(
                             target=_close_provider, args=(provider,), daemon=True
                         ).start()
-                recorder.close()
-                if args.record:
-                    from .dataset import export_v3
+                try:
+                    recorder.close()
+                    if args.record:
+                        from .dataset import export_v3
 
-                    print(f"LeRobot v3: {export_v3(recorder.path)}", flush=True)
+                        print(f"LeRobot v3: {export_v3(recorder.path)}", flush=True)
+                finally:
+                    from .episodes import catalog
+
+                    print(f"Rollout catalog: {catalog(settings.run_dir)}", flush=True)
 
 
 def _close_provider(provider):
@@ -374,6 +409,10 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         settings = load_settings(args.config)
+        if args.command == "recordings":
+            from .rollout_viewer import serve
+
+            return serve(settings.run_dir, args.host, args.port)
         if args.command == "karma":
             from openpi_control.cli import main as karma_main
 
@@ -397,6 +436,11 @@ def main(argv=None):
             from .recording import write_summary
 
             print(json.dumps(write_summary(run_path(settings, args.run_id)), indent=2))
+            return 0
+        if args.command == "catalog":
+            from .episodes import catalog
+
+            print(catalog(settings.run_dir))
             return 0
         if args.command == "export-v3":
             from .dataset import export_v3

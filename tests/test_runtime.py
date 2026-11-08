@@ -16,7 +16,7 @@ from spill.viewer import Viewer
 
 
 def harness(tmp_path, policy=None, planner=None):
-    settings = Settings(run_dir=str(tmp_path))
+    settings = Settings(run_dir=str(tmp_path), execution_window_s=None)
     control = Control()
     robot = MockRobot()
     cameras = Cameras(settings.serials, mock=True)
@@ -313,6 +313,7 @@ def test_real_sigint_to_mock_process_parks_and_exits(tmp_path):
             "test",
             "--dream-only",
             "--no-viz",
+            "--no-record",
             "--seconds",
             "30",
         ],
@@ -343,3 +344,87 @@ def test_real_sigint_to_mock_process_parks_and_exits(tmp_path):
         if p.poll() is None:
             p.kill()
             p.wait()
+
+
+def test_observation_pause_explains_uncertainty_and_resume_resets_budget(tmp_path, capsys):
+    class Inspect(MockPlanner):
+        def __init__(self):
+            super().__init__()
+            self.histories = []
+
+        def decide(self, prompt, observation, history):
+            self.histories.append(list(history))
+            return super().decide(prompt, observation, history).model_copy(update={
+                "action": "observe", "explanation": "Contact is occluded",
+                "evidence": "Rim hidden by gripper",
+            })
+
+    planner = Inspect()
+    r = harness(tmp_path, planner=planner)
+    r.settings.limits.task_timeout_s = 5
+    counts = []
+
+    def operator():
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if r.control.paused:
+                counts.append(planner.calls)
+                if len(counts) == 1:
+                    r.control.resume()
+                else:
+                    r.control.stop()
+                    return
+            time.sleep(0.005)
+        r.control.stop()
+
+    thread = threading.Thread(target=operator)
+    thread.start()
+    try:
+        r.run("inspect")
+        assert counts == [3, 6]
+        assert not r.robot.history
+        assert planner.histories[1][-1]["motion_executed"] is False
+    finally:
+        thread.join()
+        cleanup(r)
+    output = capsys.readouterr().out
+    assert "Reason: Contact is occluded" in output
+    assert "Evidence: Rim hidden by gripper" in output
+    events = list(read_events(r.recorder.path))
+    assert [e["count"] for e in events if e["kind"] == "observation_wait"] == [1, 2, 3, 1, 2, 3]
+
+
+def test_configured_window_overrides_short_planner_duration(tmp_path):
+    r = harness(tmp_path)
+    r.settings.execution_window_s = 2
+    assert Settings().execution_window_s == 20
+    try:
+        r.run("test")  # MockPlanner requests only one second.
+        report = r.history[0]["report"]
+        assert report["elapsed_s"] >= 2 - 1e-9
+        assert report["chunks"] > 1
+    finally:
+        cleanup(r)
+    events = list(read_events(r.recorder.path))
+    window = next(e for e in events if e["kind"] == "execution_window")
+    assert window["requested_s"] == 1
+    assert window["effective_s"] == 2
+
+
+def test_recovery_uses_seven_second_window_instead_of_twenty(tmp_path):
+    class RecoveryPlanner(MockPlanner):
+        def decide(self, *args):
+            return super().decide(*args).model_copy(update={"recovery": True})
+
+    r = harness(tmp_path, planner=RecoveryPlanner())
+    r.settings.execution_window_s = 20
+    try:
+        r.run("recover")
+        report = r.history[0]["report"]
+        assert 7 - 1e-9 <= report["elapsed_s"] < 8
+    finally:
+        cleanup(r)
+    events = list(read_events(r.recorder.path))
+    window = next(e for e in events if e["kind"] == "execution_window")
+    assert window["effective_s"] == 7
+    assert window["recovery"] is True

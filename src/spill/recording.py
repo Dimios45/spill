@@ -195,7 +195,7 @@ def write_summary(path):
                             "elapsed_s",
                             "policy_wait_s",
                             "wall_elapsed_s",
-                        "gap_s",
+                            "gap_s",
                             "rows",
                             "chunks",
                             "outcome",

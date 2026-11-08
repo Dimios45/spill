@@ -221,6 +221,7 @@ class Runner:
                         continue
                     seen_generation = self.control.generation
                     chunk, row, stage = None, 0, "plan"
+                    observe_decisions = 0
                     self.recorder.event(
                         "control",
                         generation=seen_generation,
@@ -264,6 +265,8 @@ class Runner:
                         continue
                     if not self.plan_job.pending:
                         self.viewer.publish(status="Astra planning", astra_observation=obs)
+                        plan_started = time.monotonic()
+                        print("Astra: assessing fresh images; arms holding", flush=True)
                         self.plan_job.submit(
                             obs.generation, self.planner.decide, prompt, obs, list(self.history)
                         )
@@ -297,6 +300,12 @@ class Runner:
                                     f"in {delay:g}s with fresh images",
                                     flush=True,
                                 )
+                                if type(error).__name__ == "ValidationError":
+                                    print(
+                                        "Astra returned malformed JSON; discarded the entire "
+                                        "response. No motion will use partial instructions.",
+                                        flush=True,
+                                    )
                                 continue
                             self.control.pause(f"Planner error: {type(error).__name__}: {error}")
                             continue
@@ -304,6 +313,14 @@ class Runner:
                         self.viewer.publish(decision=decision)
                         self.recorder.event(
                             "decision", generation=generation, **decision.model_dump()
+                        )
+                        print(
+                            f"Astra [{decision.action}] in {time.monotonic() - plan_started:.1f}s: "
+                            f"{decision.active_subtask}\n"
+                            f"  Reason: {decision.explanation}\n"
+                            f"  Evidence: {decision.evidence}\n"
+                            f"  Instruction: {decision.instruction}",
+                            flush=True,
                         )
                         if decision.action == "finish":
                             outcome = (
@@ -319,17 +336,59 @@ class Runner:
                             continue
                         if decision.action == "observe":
                             observe_decisions += 1
+                            self.history.append(dict(
+                                action="observe", consecutive_observations=observe_decisions,
+                                explanation=decision.explanation, evidence=decision.evidence,
+                                instruction=decision.instruction,
+                                motion_executed=False,
+                            ))
+                            self.recorder.event(
+                                "observation_wait", count=observe_decisions, limit=3,
+                                generation=generation, explanation=decision.explanation,
+                                evidence=decision.evidence, motion_executed=False,
+                            )
+                            print(
+                                f"Inspection {observe_decisions}/3: fresh images only; "
+                                "no Dream motion or camera repositioning",
+                                flush=True,
+                            )
                             if observe_decisions >= 3:
-                                self.control.pause("Three observations without action")
+                                self.control.pause(
+                                    "Three observations without action. Astra: "
+                                    + decision.explanation + " Evidence: " + decision.evidence
+                                )
                             continue
                         observe_decisions = 0
                         key = decision.active_subtask.strip().lower()
                         if decision.recovery:
                             recoveries[key] = recoveries.get(key, 0) + 1
+                            print(
+                                f"Recovery attempt {recoveries[key]}/"
+                                f"{self.settings.limits.retries_per_subtask}: {key}",
+                                flush=True,
+                            )
                         if recoveries.get(key, 0) > self.settings.limits.retries_per_subtask:
                             self.control.pause("Recovery budget exhausted")
                             continue
                         self.feed_enabled.clear()
+                        motion_budget = (
+                            self.settings.execution_window_s
+                            if self.settings.execution_window_s is not None
+                            else decision.duration_s
+                        )
+                        if decision.recovery:
+                            motion_budget = self.settings.recovery_window_s
+                        self.recorder.event(
+                            "execution_window", requested_s=decision.duration_s,
+                            effective_s=motion_budget, generation=generation,
+                            recovery=decision.recovery,
+                            completion="whole_chunk",
+                        )
+                        print(
+                            f"Dream {'recovery' if decision.recovery else 'execution'} window: "
+                            f"{motion_budget:g}s commanded motion "
+                            "before Astra review (finish current chunk)", flush=True,
+                        )
                         # Reset can make a short network call; put it in the motion worker.
                         self.motion_job.submit(
                             generation, self._reset_policy, decision.instruction, generation, obs
@@ -353,7 +412,7 @@ class Runner:
                         stage = "execute"
                 elif stage == "execute":
                     self.viewer.publish(status="Dream executing", commanded=self.commanded)
-                    budget_used = self.report.elapsed_s >= decision.duration_s - 1e-9
+                    budget_used = self.report.elapsed_s >= motion_budget - 1e-9
                     if budget_used and not self.motion_job.pending and chunk is None:
                         self.feed_enabled.clear()
                         if not self._hold_if_fresh():
@@ -370,6 +429,10 @@ class Runner:
                         self.history.append(
                             dict(
                                 instruction=decision.instruction,
+                                active_subtask=decision.active_subtask,
+                                recovery=decision.recovery,
+                                explanation=decision.explanation,
+                                evidence=decision.evidence,
                                 report=dataclasses.asdict(self.report),
                             )
                         )
@@ -385,7 +448,7 @@ class Runner:
                         self.motion_job.executed_at_submit = self.report.rows
                         print(
                             f"Dream inference: {self.report.elapsed_s:.1f}/"
-                            f"{decision.duration_s:g}s motion budget used",
+                            f"{motion_budget:g}s motion budget used",
                             flush=True,
                         )
                         self.viewer.publish(dream_observation=obs)
