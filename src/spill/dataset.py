@@ -15,6 +15,22 @@ from .recording import load_observation, read_events
 from .types import ARMS, CAMERAS, SpillError
 
 
+def preflight_export():
+    """Check export dependencies without loading their GC graph into the controller."""
+    import subprocess
+    import sys
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "from openpi_control.record import require_lerobot; require_lerobot()"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SpillError(f"LeRobot dependency preflight failed: {type(exc).__name__}") from exc
+    if result.returncode:
+        raise SpillError("LeRobot dependency preflight failed: " + result.stderr[-2000:])
+
+
 def sampled_segments(events, fps=20):
     samples = [e for e in events if e["kind"] == "dataset_sample"]
     source = "observer_samples"

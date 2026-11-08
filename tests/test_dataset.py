@@ -52,3 +52,14 @@ def test_real_karma_v3_sink(tmp_path):
     assert len(list((target / "videos").rglob("*.mp4"))) == 3
     with pytest.raises(SpillError, match="overwrite"):
         export_v3(root)
+
+
+def test_dependency_preflight_does_not_import_export_stack_in_parent():
+    import subprocess
+    import sys
+
+    result = subprocess.run([sys.executable, '-c',
+        'import sys; from spill.dataset import preflight_export; preflight_export(); '
+        'assert "lerobot.datasets.lerobot_dataset" not in sys.modules; '
+        'assert "torch" not in sys.modules'], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr

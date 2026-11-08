@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import dataclasses
+import gc
 import json
 import queue
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +38,10 @@ class Recorder:
         (self.path / "observations").mkdir()
         self.queue = queue.Queue(maxsize=256)
         self.error = None
+        self.gc_pauses = deque(maxlen=128)
+        self.gc_started = {}
+        self.gc_callback = self._gc_timing
+        gc.callbacks.append(self.gc_callback)
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
         self.event(
@@ -50,6 +56,17 @@ class Recorder:
     def check(self):
         if self.error:
             raise SafetyError(f"Recording failed: {self.error}")
+
+    def _gc_timing(self, phase, info):
+        # No I/O or recorder queue operations inside the collector callback.
+        generation = info["generation"]
+        if phase == "start":
+            self.gc_started[generation] = time.monotonic()
+        else:
+            end = time.monotonic()
+            start = self.gc_started.pop(generation, end)
+            if end - start >= 0.02:
+                self.gc_pauses.append((start, end, generation))
 
     def _put(self, item):
         self.check()
@@ -78,6 +95,13 @@ class Recorder:
                         if item is None:
                             return
                         kind, data = item
+                        while self.gc_pauses:
+                            start, end, generation = self.gc_pauses.popleft()
+                            out.write(json.dumps(dict(
+                                kind="python_gc_pause", timestamp=end,
+                                started_at=start, elapsed_s=end - start,
+                                generation=generation,
+                            )) + "\n")
                         if kind == "observation":
                             obs, purpose = data
                             if obs.id not in seen:
@@ -119,6 +143,8 @@ class Recorder:
             self.error = f"{type(exc).__name__}: {exc}"
 
     def close(self):
+        if self.gc_callback in gc.callbacks:
+            gc.callbacks.remove(self.gc_callback)
         if self.thread.is_alive():
             try:
                 self.queue.put(None, timeout=2)

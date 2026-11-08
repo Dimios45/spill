@@ -354,3 +354,13 @@ def test_repeated_interrupts_do_not_abandon_final_cleanup():
     with pytest.raises(KeyboardInterrupt):
         c.interrupt()
     c.interrupt()  # third and subsequent Ctrl+C cannot bypass de-energization
+
+
+def test_skew_error_identifies_camera_and_threshold():
+    o = observation()
+    o.frames["top"] = dataclasses.replace(o.frames["top"], captured_at=o.timestamp - 0.15)
+    with pytest.raises(SafetyError, match="Camera/state time skew") as error:
+        o.validate()
+    assert "camera.top=" in str(error.value)
+    assert "state.left=" in str(error.value)
+    assert "> 100ms" in str(error.value)

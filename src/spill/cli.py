@@ -239,9 +239,9 @@ def run(settings, args):
             "pause instead of switching to a sideways grasp."
         )
     if args.record:
-        from openpi_control.record import require_lerobot
+        from .dataset import preflight_export
 
-        require_lerobot()  # Fail before energizing hardware.
+        preflight_export()  # Fail before energizing; keep heavy imports outside control process.
     if args.seconds is not None:
         settings.limits.task_timeout_s = args.seconds
         settings = Settings.model_validate(settings.model_dump())
@@ -364,6 +364,9 @@ def _close_provider(provider):
 
 
 class BaselinePlanner:
+    display_name = "Dream-only baseline"
+    continuous = True
+
     def __init__(self, duration):
         self.duration = duration
 

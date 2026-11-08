@@ -428,3 +428,99 @@ def test_recovery_uses_seven_second_window_instead_of_twenty(tmp_path):
     window = next(e for e in events if e["kind"] == "execution_window")
     assert window["effective_s"] == 7
     assert window["recovery"] is True
+
+
+def test_delayed_acquisition_discards_snapshot_and_pauses(tmp_path):
+    r = harness(tmp_path)
+    original = r.robot.read
+    calls = []
+
+    def delayed():
+        value = original()
+        calls.append(value[1])
+        if len(calls) == 1:
+            time.sleep(0.13)
+        return value
+
+    r.robot.read = delayed
+    try:
+        obs = r._capture_observation()
+        obs.validate()
+        assert len(calls) == 2
+        assert obs.state_times == calls[1]
+        assert r.control.paused
+        assert not r.robot.history
+    finally:
+        cleanup(r)
+
+
+def test_repeated_acquisition_delay_fails_closed(tmp_path):
+    import pytest
+
+    from spill.types import SafetyError
+
+    r = harness(tmp_path)
+    original = r.robot.read
+
+    def delayed():
+        value = original()
+        time.sleep(0.13)
+        return value
+
+    r.robot.read = delayed
+    try:
+        with pytest.raises(SafetyError, match="delayed twice"):
+            r._capture_observation()
+        assert not r.robot.history
+    finally:
+        cleanup(r)
+
+
+def test_skew_fault_homes_only_with_healthy_motor_feedback(tmp_path):
+    from spill.types import ObservationSkewError, SafetyError
+
+    for healthy in (True, False):
+        r = harness(tmp_path)
+        reads = r.robot.read
+        calls = 0
+
+        def read():
+            nonlocal calls
+            calls += 1
+            if not healthy and calls > 1:
+                raise SafetyError("motor feedback lost")
+            return reads()
+
+        r.robot.read = read
+        r._observe = lambda: None
+        r.snapshot = lambda: (_ for _ in ()).throw(ObservationSkewError("test skew"))
+        try:
+            result = r.run("test")
+            assert result.outcome == "failed"
+            assert r.robot.parked is healthy
+        finally:
+            cleanup(r)
+
+
+
+
+def test_dream_only_checkpoints_keep_same_session(tmp_path):
+    from spill.cli import BaselinePlanner
+
+    class CountingPolicy(MockPolicy):
+        resets = 0
+
+        def reset(self, *args):
+            self.resets += 1
+            super().reset(*args)
+
+    policy = CountingPolicy()
+    r = harness(tmp_path, planner=BaselinePlanner(3), policy=policy)
+    r.settings.execution_window_s = 1
+    r.settings.limits.task_timeout_s = 3
+    try:
+        r.run("test")
+        assert policy.resets == 1
+    finally:
+        cleanup(r)
+    assert any(e['kind'] == 'policy_session_continued' for e in read_events(r.recorder.path))

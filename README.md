@@ -289,3 +289,10 @@ bounded to joint ranges and approached within motion limits; nonfinite inputs,
 expired predictions and infeasible bounded paths are rejected. Calibration-based
 capsules protect the modeled static cell; they do not discover new obstacles or
 prove mesh-level clearance. General tabletop performance is task-dependent.
+
+### Dream rollout findings and timing fixes
+
+See the [Dream-only and Astra + Dream rollout review](docs/rollout-review-2026-11-08.md)
+for important episodes, exact prompts, dataset/log links and evidence limits, and
+[the timing investigation](docs/timing-2026-11-08.md) for recording isolation and
+Dream session continuity fixes.

@@ -53,8 +53,17 @@ other outside is expected geometry, not by itself a failure or reason to pause.
 Assess localized rim engagement, visible deformation, clearance from contents,
 an unobstructed pouring opening, and support together. Distinguish uncertainty
 from observed damage. Do not infer a secure grasp merely from finger insertion.
-Pause for actual deformation, obstructed contents, unsafe clearance, or unresolved
-support/contact uncertainty needed for the next action, not insertion alone.
+Distinguish minor local flex at a paper rim from functionally significant damage.
+A slight indentation or loss of perfect roundness alone is not a reason to pause
+or reset when the grasp remains stable, contents are clear, and the pouring
+opening remains usable. Respect the user's object-preservation instructions;
+do not deliberately crush or tear an object. Base damage concerns on specific
+visible evidence and explain how it prevents the next action. Do not infer
+damage merely because a region is occluded or a finger is inside the cup.
+Pause or choose a supported recovery for tearing, collapse, an opening blocked
+by deformation, obstructed contents, unsafe clearance, or unresolved support/
+contact uncertainty necessary for the next action. Prefer continuing a feasible
+task over resetting solely to restore a cosmetically perfect rim.
 For deformable or fragile objects, use short manipulation intervals and inspect
 shape and openings before lifting or transferring contents. If deformation
 obstructs the task, do not repeat the same manipulation or tighten the grasp.

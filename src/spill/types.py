@@ -23,6 +23,10 @@ class FeedbackGap(SafetyError):
     """Transient feedback loss: inhibit commands while waiting for fresh state."""
 
 
+class ObservationSkewError(SafetyError):
+    """Individually fresh inputs whose timestamps are insufficiently aligned."""
+
+
 @dataclass(frozen=True)
 class Frame:
     rgb: np.ndarray
@@ -51,7 +55,15 @@ class Observation:
         ):
             raise SafetyError("Stale or future-dated camera/robot state")
         if max(times) - min(times) > max_skew:
-            raise SafetyError("Camera/state time skew exceeds limit")
+            ages = {
+                **{f"camera.{n}": (now - f.captured_at) * 1000 for n, f in self.frames.items()},
+                **{f"state.{n}": (now - t) * 1000 for n, t in self.state_times.items()},
+            }
+            raise ObservationSkewError(
+                f"Camera/state time skew exceeds limit: {(max(times) - min(times)) * 1000:.1f}ms "
+                f"> {max_skew * 1000:g}ms; ages: "
+                + ", ".join(f"{n}={age:.1f}ms" for n, age in ages.items())
+            )
         for q in self.joints.values():
             if q.shape != (7,) or not np.isfinite(q).all() or not 0 <= q[-1] <= 1:
                 raise SafetyError("Invalid native joint/gripper state")

@@ -240,3 +240,82 @@ camera stream. Video seeking is supported. Only the gallery and inventoried top
 videos are served, not arbitrary run logs or configuration files. No API calls
 or motor access are involved. The viewer has no authentication; devices able to
 reach the port can read the displayed prompts and videos.
+
+## Paper-cup flex versus damage
+
+Astra's object assessment distinguishes minor localized rim flex from functional
+damage. A slight indentation or an imperfectly round rim alone should not cause
+resetting when engagement is stable, contents are clear and the pouring opening
+remains usable. Tearing, collapse, a blocked opening, unsafe clearance and
+unresolved support/contact uncertainty remain reasons to recover or pause.
+The user's preservation instructions still apply. This is planner guidance,
+not a measured damage or force detector; it does not guarantee better execution.
+The existing 20-second ordinary and 7-second recovery budgets are unchanged.
+
+## Dream-only timing failure — 20261108T082620-73dcacc4
+
+This run executed 532 rows (26.6 seconds of commanded motion) before an
+execution-deadline pause and, approximately 1 ms later, a camera/state-skew fault.
+The final logged motor feedback ages were 0–5 ms. The last accepted observation
+had roughly 17 ms camera/state skew, but the failing observation timestamps were
+not retained, so neither a particular camera nor CPU/USB scheduling can be
+identified as the cause. This was not an Astra decision or the earlier stale-CAN
+parser defect. Dream-only made no Astra API calls despite the old terminal labels.
+
+Skew errors now print individual camera/state ages and the threshold. Observation
+fault events include the most recent candidate observation timestamps, camera
+sequences and device timestamps. Execution deadline misses now log lateness,
+threshold, row and rate. Dream-only terminal messages identify the baseline.
+No timing thresholds or shutdown rules were changed. A future occurrence needs
+these timestamps to distinguish capture delay from host scheduling or inconsistent
+snapshot acquisition. An accepted observation before the failure is not evidence
+that the failing observation was safe to use.
+
+## Delayed observation acquisition — 20261108T083014-1083a2bb
+
+The next timing failure reported 173.1 ms skew, with right-wrist age 0.5 ms,
+left/right state ages 147.4/149.1 ms, top 173.5 ms and left wrist 149.2 ms.
+The executor reported 105.7 ms deadline lateness. This pattern is consistent
+with delayed sequential snapshot acquisition, but does not identify the source
+of the delay (host scheduling, contention, or capture).
+
+Acquisition duration is now measured across arm-state and camera-mailbox reads.
+If that duration exceeds the existing skew limit, the candidate is discarded,
+queued actions are invalidated, policy feeding stops, and control pauses. One
+fresh acquisition is attempted. A second slow acquisition fails closed; every
+returned candidate still undergoes the existing age, skew and state validation.
+An independently stale camera or skew during a fast acquisition remains a fault.
+Source timestamps are never refreshed or altered. Recovery leaves the operator
+paused; Resume must reobserve and replan. This fixes handling of an interrupted
+collection, not its underlying scheduling cause. The next hardware run is needed
+to determine whether this mechanism applies to the reported failures.
+
+## Homing after camera/state skew
+
+For the repeated skew failure in `20261108T083523-ca66f9b7`, there was no
+`observation_acquisition_delayed` event. Acquisition elapsed time therefore did
+not exceed the threshold, even though the input state timestamps were about
+146 ms old. The previous acquisition-duration retry does not address this case.
+The producer/delivery delay remains undiagnosed; do not claim that changing
+shutdown behavior resolves it.
+
+At the operator's request, an individually fresh but misaligned observation now
+raises a distinct `ObservationSkewError`. Policy execution terminates, and the
+shutdown path performs a new Karma motor read (checking per-motor feedback ages,
+mode and temperature) plus both arm-state timestamp ages. If all pass and no
+feedback recovery is pending, Karma's normal homing and power-down path is used.
+The rollout is still recorded as failed. `--no-park` is respected. Motor faults,
+stale/future-dated inputs, tracking faults and other exceptions do not qualify
+for this fallback. A failed motor recheck skips homing and stops in place.
+Homing still requires a clear physical path; the camera-skew fallback does not
+establish collision clearance or guarantee that a held object is safe to carry.
+
+Interactive task input currently accepts one line. Paste the complete prompt on
+one line or pass it as a quoted command argument; multiline shell input after
+the run is not part of the robot task. Ctrl+C cancels an unfinished `>` shell
+continuation prompt.
+
+The repeated timing failures have a reproduced local pause contributor and a
+recording-preflight isolation fix. See [the timing investigation](timing-2026-11-08.md).
+Dream-only reporting checkpoints now retain the same Dream session instead of
+clearing its memory every 20 seconds.

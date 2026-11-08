@@ -6,7 +6,15 @@ import time
 
 from openpi_control.safety import MAX_STALE_S
 
-from .types import ARMS, ExecutionReport, FeedbackGap, Observation, RunResult, SafetyError
+from .types import (
+    ARMS,
+    ExecutionReport,
+    FeedbackGap,
+    Observation,
+    ObservationSkewError,
+    RunResult,
+    SafetyError,
+)
 
 
 class Job:
@@ -87,14 +95,43 @@ class Runner:
         self.plan_job, self.motion_job = Job(), Job()
         self.commanded = None
         self.history = []
+        self.planner_name = getattr(planner, "display_name", "Astra")
         self.report = ExecutionReport()
 
+    def _capture_observation(self):
+        # A scheduling pause between reading state and taking the camera mailbox
+        # can create an inconsistent snapshot even when every producer is healthy.
+        # Discard that acquisition, invalidate actions, and retry once. Never
+        # change source timestamps or publish the discarded observation.
+        for attempt in range(2):
+            started = time.monotonic()
+            q, times = self.robot.read()
+            frames = self.cameras.latest()
+            elapsed = time.monotonic() - started
+            if elapsed > self.settings.limits.camera_skew_s:
+                self.recorder.event(
+                    "observation_acquisition_delayed", attempt=attempt + 1,
+                    elapsed_s=elapsed, state_times=times,
+                    camera_times={n: f.captured_at for n, f in frames.items()},
+                )
+                if attempt:
+                    raise SafetyError("Observation acquisition delayed twice; cannot obtain coherent snapshot")
+                with self.control.lock:
+                    self.feed_enabled.clear()
+                    self.control.pause("Observation acquisition delayed; discarding snapshot and reacquiring")
+                continue
+            return Observation(
+                self.observation_id, self.control.generation,
+                min(f.captured_at for f in frames.values()), frames, q, times,
+            )
+
     def _observe(self):
+        candidate = None
         try:
             while not self.observe_stop.is_set():
                 # State reads do not command motors. Capture owns camera streams independently.
                 try:
-                    q, times = self.robot.read()
+                    obs = self._capture_observation()
                 except FeedbackGap as exc:
                     self._begin_feedback_gap(exc)
                     if time.monotonic() - self.feedback_gap >= MAX_STALE_S:
@@ -104,15 +141,7 @@ class Runner:
                     self.viewer.publish(status="Waiting for fresh motor feedback", chunk=None)
                     self.observe_stop.wait(0.01)
                     continue
-                frames = self.cameras.latest()
-                obs = Observation(
-                    self.observation_id,
-                    self.control.generation,
-                    min(f.captured_at for f in frames.values()),
-                    frames,
-                    q,
-                    times,
-                )
+                candidate = obs
                 obs.validate(self.settings.limits.state_age_s, self.settings.limits.camera_skew_s)
                 self.observation_id += 1
                 with self.obs_lock:
@@ -143,12 +172,23 @@ class Runner:
                     error_type=type(exc).__name__,
                     error=str(exc),
                     telemetry=list(getattr(self.robot, "telemetry_history", [])),
+                    observation_timing=(
+                        dict(
+                            observation_id=candidate.id,
+                            state_times=candidate.state_times,
+                            frames={n: dict(captured_at=f.captured_at, sequence=f.sequence,
+                                            device_timestamp_ms=f.device_timestamp_ms)
+                                    for n, f in candidate.frames.items()},
+                        ) if candidate is not None else None
+                    ),
                 )
             except Exception:
                 pass  # A failed logger must not hide the hardware fault.
 
     def snapshot(self):
         if self.observe_error:
+            if isinstance(self.observe_error, ObservationSkewError):
+                raise self.observe_error
             raise SafetyError(f"Observation service failed: {self.observe_error}")
         if self.feedback_gap is not None:
             return None
@@ -266,7 +306,7 @@ class Runner:
                     if not self.plan_job.pending:
                         self.viewer.publish(status="Astra planning", astra_observation=obs)
                         plan_started = time.monotonic()
-                        print("Astra: assessing fresh images; arms holding", flush=True)
+                        print(f"{self.planner_name}: preparing task; arms holding", flush=True)
                         self.plan_job.submit(
                             obs.generation, self.planner.decide, prompt, obs, list(self.history)
                         )
@@ -315,7 +355,7 @@ class Runner:
                             "decision", generation=generation, **decision.model_dump()
                         )
                         print(
-                            f"Astra [{decision.action}] in {time.monotonic() - plan_started:.1f}s: "
+                            f"{self.planner_name} [{decision.action}] in {time.monotonic() - plan_started:.1f}s: "
                             f"{decision.active_subtask}\n"
                             f"  Reason: {decision.explanation}\n"
                             f"  Evidence: {decision.evidence}\n"
@@ -387,7 +427,7 @@ class Runner:
                         print(
                             f"Dream {'recovery' if decision.recovery else 'execution'} window: "
                             f"{motion_budget:g}s commanded motion "
-                            "before Astra review (finish current chunk)", flush=True,
+                            f"before {self.planner_name} review (finish current chunk)", flush=True,
                         )
                         # Reset can make a short network call; put it in the motion worker.
                         self.motion_job.submit(
@@ -422,8 +462,8 @@ class Runner:
                         self.recorder.event("subtask_report", **dataclasses.asdict(self.report))
                         print(
                             f"Subtask: {self.report.elapsed_s:.1f}s commanded motion, "
-                            f"{self.report.policy_wait_s:.1f}s Dream inference, "
-                            f"{self.report.chunks} chunks; asking Astra to assess progress",
+                            f"{self.report.policy_wait_s:.1f}s Dream action preparation, "
+                            f"{self.report.chunks} chunks; returning to {self.planner_name}",
                             flush=True,
                         )
                         self.history.append(
@@ -436,7 +476,17 @@ class Runner:
                                 report=dataclasses.asdict(self.report),
                             )
                         )
-                        stage = "plan"
+                        if getattr(self.planner, "continuous", False):
+                            # A reporting checkpoint is not a new Dream episode.
+                            # Keep the policy session/history until operator replan.
+                            self.report = ExecutionReport()
+                            step_started = now
+                            self.feed_enabled.set()
+                            self.recorder.event("policy_session_continued", generation=obs.generation)
+                            print("Dream-only checkpoint: continuing the same policy session", flush=True)
+                            stage = "execute"
+                        else:
+                            stage = "plan"
                         continue
                     # At most one in flight; inference can overlap only the currently validated chunk.
                     remaining = 0 if chunk is None else chunk.length - row
@@ -521,7 +571,15 @@ class Runner:
                         dt = 1 / chunk.hz
                         # Missed deadlines do not cause a catch-up burst.
                         if now - next_tick > max(0.1, 2 * dt):
-                            self.control.pause("Execution deadline missed")
+                            self.recorder.event(
+                                "execution_deadline_missed", late_s=now - next_tick,
+                                limit_s=max(0.1, 2 * dt), row=row, hz=chunk.hz,
+                                observation_id=obs.id, generation=self.control.generation,
+                            )
+                            self.control.pause(
+                                f"Execution deadline missed: {(now - next_tick) * 1000:.1f}ms "
+                                f"late; limit={max(0.1, 2 * dt) * 1000:g}ms"
+                            )
                             continue
                         target = {n: chunk.arms[n][row] for n in ARMS}
                         with self.control.lock:
@@ -555,8 +613,28 @@ class Runner:
                 time.sleep(0.005)
         except Exception as exc:
             outcome, reason = "failed", f"{type(exc).__name__}: {exc}"
-            # Hardware/state failures have no trustworthy path home.
-            self.control.stop(park=False, reason=reason)
+            # Only camera/state alignment faults qualify for operator-requested
+            # homing. All other safety faults still stop in place.
+            park = False
+            if isinstance(exc, ObservationSkewError) and self.control.park:
+                self.feed_enabled.clear()
+                try:
+                    if self.feedback_gap is not None:
+                        raise SafetyError("Motor feedback recovery is still pending")
+                    _, times = self.robot.read()  # KarmaRobot checks per-motor ages, mode and temperature.
+                    now = time.monotonic()
+                    if set(times) != set(ARMS) or any(
+                        not 0 <= now - t <= self.settings.limits.state_age_s
+                        for t in times.values()
+                    ):
+                        raise SafetyError("Motor state is not fresh enough to home")
+                    park = True
+                    print("Camera/state skew: motor checks passed; homing then powering off", flush=True)
+                    self.recorder.event("fault_shutdown", fault="observation_skew", park=True)
+                except Exception as home_error:
+                    park = False
+                    print(f"Homing skipped: {home_error}; stopping in place", flush=True)
+            self.control.stop(park=park, reason=reason)
         finally:
             self.feed_enabled.clear()
             self.observe_stop.set()
