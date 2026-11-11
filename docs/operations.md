@@ -77,7 +77,8 @@ ambiguous. Success requires independent inspection, especially for tiny pills.
 | Feedback recovers within grace | Fresh measurements available again | Reobserve and replan; never resume the old chunk |
 | Any fault that ends the run (stale feedback past grace, tracking, temperature, camera, observation, planner exception) | Run recorded as failed | Karma homes and then de-energizes, unless `--no-park` or Stop Now |
 
-Ctrl+C during an active feedback gap also skips homing. Native watchdogs and
+A first Ctrl+C during an active feedback gap also homes; a second Ctrl+C stops
+in place. Native watchdogs and
 hardware fault behavior remain authoritative; software cannot guarantee that
 arms remain energized during a controller, power or communications failure.
 The physical stop remains separate from Viser and terminal controls.
