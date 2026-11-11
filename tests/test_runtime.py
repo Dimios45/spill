@@ -200,7 +200,7 @@ def test_pause_discards_late_motion(tmp_path):
         cleanup(r)
 
 
-def test_camera_failure_stops_in_place(tmp_path):
+def test_camera_failure_homes(tmp_path):
     r = harness(tmp_path)
 
     def fail():
@@ -212,7 +212,7 @@ def test_camera_failure_stops_in_place(tmp_path):
     try:
         result = r.run("test")
         assert result.outcome == "failed"
-        assert not r.robot.parked
+        assert r.robot.closed and r.robot.parked
     finally:
         t.join()
         cleanup(r)
@@ -246,7 +246,7 @@ def test_transient_motor_gap_inhibits_commands_and_replans(tmp_path):
     assert any(e["kind"] == "control" for e in events)
 
 
-def test_sustained_motor_gap_still_shuts_down_in_place(tmp_path):
+def test_sustained_motor_gap_fails_then_homes(tmp_path):
     from spill.types import FeedbackGap
 
     r = harness(tmp_path)
@@ -263,12 +263,12 @@ def test_sustained_motor_gap_still_shuts_down_in_place(tmp_path):
         result = r.run("test")
         assert result.outcome == "failed"
         assert "grace" in result.reason
-        assert r.robot.closed and not r.robot.parked
+        assert r.robot.closed and r.robot.parked
     finally:
         cleanup(r)
 
 
-def test_stop_during_feedback_gap_does_not_attempt_home(tmp_path):
+def test_stop_during_feedback_gap_homes(tmp_path):
     from spill.types import FeedbackGap
 
     r = harness(tmp_path)
@@ -291,7 +291,7 @@ def test_stop_during_feedback_gap_does_not_attempt_home(tmp_path):
     stopper.start()
     try:
         r.run("test")
-        assert r.robot.closed and not r.robot.parked
+        assert r.robot.closed and r.robot.parked
     finally:
         stopper.join()
         cleanup(r)
@@ -476,28 +476,16 @@ def test_repeated_acquisition_delay_fails_closed(tmp_path):
         cleanup(r)
 
 
-def test_skew_fault_homes_only_with_healthy_motor_feedback(tmp_path):
-    from spill.types import ObservationSkewError, SafetyError
-
-    for healthy in (True, False):
+def test_fault_homes_unless_operator_disabled_parking(tmp_path):
+    for park in (True, False):
         r = harness(tmp_path)
-        reads = r.robot.read
-        calls = 0
-
-        def read():
-            nonlocal calls
-            calls += 1
-            if not healthy and calls > 1:
-                raise SafetyError("motor feedback lost")
-            return reads()
-
-        r.robot.read = read
+        r.control.park = park  # False is --no-park
         r._observe = lambda: None
-        r.snapshot = lambda: (_ for _ in ()).throw(ObservationSkewError("test skew"))
+        r.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
         try:
             result = r.run("test")
             assert result.outcome == "failed"
-            assert r.robot.parked is healthy
+            assert r.robot.closed and r.robot.parked is park
         finally:
             cleanup(r)
 

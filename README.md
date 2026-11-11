@@ -201,9 +201,9 @@ remotely; nominal base placement is labeled uncalibrated in zero-shot mode.
 | Second Ctrl+C during parking | Cancel remaining parking; de-energize in place |
 | Stop Now | De-energize without parking; software control, not the physical e-stop |
 
-Sustained feedback faults stop in place. Brief feedback gaps inhibit commands and
-invalidate pending predictions; fresh feedback triggers replanning. Ctrl+C during
-a gap skips homing. See [operator guidance](docs/operations.md) and the
+A fault that ends the run homes the arms, then de-energizes. Brief feedback gaps
+inhibit commands and invalidate pending predictions; fresh feedback triggers
+replanning. See [operator guidance](docs/operations.md) and the
 [safety matrix](docs/safety.md).
 
 ## Recordings and review

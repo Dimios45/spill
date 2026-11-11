@@ -616,28 +616,9 @@ class Runner:
                 time.sleep(0.005)
         except Exception as exc:
             outcome, reason = "failed", f"{type(exc).__name__}: {exc}"
-            # Only camera/state alignment faults qualify for operator-requested
-            # homing. All other safety faults still stop in place.
-            park = False
-            if isinstance(exc, ObservationSkewError) and self.control.park:
-                self.feed_enabled.clear()
-                try:
-                    if self.feedback_gap is not None:
-                        raise SafetyError("Motor feedback recovery is still pending")
-                    _, times = self.robot.read()  # KarmaRobot checks per-motor ages, mode and temperature.
-                    now = time.monotonic()
-                    if set(times) != set(ARMS) or any(
-                        not 0 <= now - t <= self.settings.limits.state_age_s
-                        for t in times.values()
-                    ):
-                        raise SafetyError("Motor state is not fresh enough to home")
-                    park = True
-                    print("Camera/state skew: motor checks passed; homing then powering off", flush=True)
-                    self.recorder.event("fault_shutdown", fault="observation_skew", park=True)
-                except Exception as home_error:
-                    park = False
-                    print(f"Homing skipped: {home_error}; stopping in place", flush=True)
-            self.control.stop(park=park, reason=reason)
+            # A fault does not cancel homing: Karma's native node homes with its own
+            # motor feedback. The operator's choice (--no-park, Stop Now) stays in force.
+            self.control.stop(reason=reason)
         finally:
             self.feed_enabled.clear()
             self.observe_stop.set()
@@ -647,8 +628,6 @@ class Runner:
                 status="Parking then shutdown" if self.control.park else "De-energizing", chunk=None
             )
             self.control.parking = True
-            if self.feedback_gap is not None:
-                self.control.park = False  # Never home with untrusted feedback.
             try:
                 failures = self.robot.close(park=self.control.park)
                 if failures:
