@@ -75,8 +75,7 @@ ambiguous. Success requires independent inspection, especially for tiny pills.
 | Second Ctrl+C / Stop Now | Cancel parking or stop immediately | De-energize in place |
 | Feedback age exceeds 250 ms | Position feedback is not fresh enough to act on | Inhibit new actions, invalidate queued predictions and wait briefly |
 | Feedback recovers within grace | Fresh measurements available again | Reobserve and replan; never resume the old chunk |
-| Motor feedback reaches one second old, or grace expires | Sustained loss of trusted feedback | De-energize in place; do not attempt home |
-| Temperature, native mode, camera or unrecoverable observation fault | Unsafe/unusable state | Stop in place |
+| Any fault that ends the run (stale feedback past grace, tracking, temperature, camera, observation, planner exception) | Run recorded as failed | Karma homes and then de-energizes, unless `--no-park` or Stop Now |
 
 Ctrl+C during an active feedback gap also skips homing. Native watchdogs and
 hardware fault behavior remain authoritative; software cannot guarantee that
@@ -307,6 +306,10 @@ feedback recovery is pending, Karma's normal homing and power-down path is used.
 The rollout is still recorded as failed. `--no-park` is respected. Motor faults,
 stale/future-dated inputs, tracking faults and other exceptions do not qualify
 for this fallback. A failed motor recheck skips homing and stops in place.
+
+Superseded on 2026-11-10: every fault that ends a run now uses Karma's homing and
+power-down path, with no Spill-side motor recheck. Karma's native node homes with
+its own motor feedback. `--no-park` and Stop Now are still respected.
 Homing still requires a clear physical path; the camera-skew fallback does not
 establish collision clearance or guarantee that a held object is safe to carry.
 

@@ -61,8 +61,7 @@ may remain in the gripper during a home move; arrange a clear home path and acco
 for the loss of holding power on shutdown. No software button replaces the physical
 emergency stop.
 
-Hardware/camera failures are not automatically treated as permission to move
-home. Native firmware/controller fault behavior remains authoritative. The Python
+Hardware/camera failures that end a run use Karma's home-and-shutdown path. Native firmware/controller fault behavior remains authoritative. The Python
 collision guard is for policy actions; Karma's native parking path retains its own
 behavior and does not run through Spill's trajectory validator.
 
@@ -71,9 +70,11 @@ Feedback gap handling uses a persistent Karma `StateGuard` and its `MAX_STALE_S`
 the observation, invalidates queued predictions, and leaves native control at its
 existing target. It does not generate a hold/home command from stale measurements.
 Fresh feedback triggers a new observation and replan; an old chunk cannot resume.
-Per-motor feedback reaching one second old, sustained unavailability, native mode
-faults, and temperature faults still terminate in place. Native watchdogs are not
-disabled or extended. Ctrl+C during a feedback gap shuts down without homing.
+A fault that ends the run (per-motor feedback one second old, tracking, temperature,
+camera, observation or planner exceptions) no longer de-energizes in place. Spill
+requests Karma's home-and-shutdown path, as `karma infer` does; the native node homes
+with its own motor feedback. `--no-park`, a second Ctrl+C and Stop Now still stop in
+place. Native watchdogs are not disabled or extended.
 This avoids treating every brief gap as a terminal fault; it does not repair a
 motor, CAN wiring, or driver problem. Camera failures remain terminal.
 
